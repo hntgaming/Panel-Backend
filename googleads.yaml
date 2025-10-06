@@ -1,0 +1,5 @@
+ad_manager:
+  application_name: GAM Management Platform
+  network_code: 152344380  # Your parent network code
+  path_to_private_key_file: key.json  # Your service account file
+  delegated_account: report@hnt-gaming.iam.gserviceaccount.com  # Your service account email

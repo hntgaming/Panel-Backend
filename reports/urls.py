@@ -1,0 +1,65 @@
+from django.urls import path, include
+from . import views
+app_name = 'reports'
+urlpatterns = [
+    path(
+        'trigger-sync/', 
+        views.trigger_sync_view, 
+        name='trigger-sync'
+    ),
+    path(
+        'sync-status/', 
+        views.sync_status_view, 
+        name='sync-status'
+    ),
+    path(
+        'data/', 
+        views.ReportDataListView.as_view(), 
+        name='report-data'
+    ),
+    path(
+        'analytics/', 
+        views.report_analytics_view, 
+        name='report-analytics'
+    ),
+    path(
+        'dashboard/', 
+        views.report_dashboard_view, 
+        name='report-dashboard'
+    ),
+    path(
+        'overview/', 
+        views.ReportOverviewView.as_view(), 
+        name='report-overview'
+    ),
+    path(
+        'detailed/', 
+        views.ReportDetailedView.as_view(), 
+        name='report-detailed'
+    ),
+    path(
+        'export/', 
+        views.ReportExportView.as_view(), 
+        name='report-export'
+    ),
+    path(
+        'query/', 
+        views.UnifiedReportsQueryView.as_view(), 
+        name='unified-query'
+    ),
+    path(
+        'financial-summary/', 
+        views.financial_summary_view, 
+        name='financial-summary'
+    ),
+    path(
+        'ivt/realtime/',
+        views.realtime_ivt_check_view,
+        name='realtime-ivt-check'
+    ),
+    path(
+        '<str:child_network_code>/vetting/',
+        views.get_vetting_analysis,
+        name='vetting-analysis'
+    ),
+]
