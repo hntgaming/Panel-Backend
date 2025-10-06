@@ -46,15 +46,8 @@ def load_publisher_permissions(user):
         return {}
     
     # Admin users have all permissions
-    if user.is_staff or user.is_superuser or user.role == 'admin':
+    if user.is_staff or user.is_superuser or user.role.upper() == 'ADMIN':
         return {perm: True for perm in PermissionType.ALL_PERMISSIONS}
-    
-    # Parent users have most permissions except manage publishers and settings
-    # They have implicit access based on their parent network
-    if user.role == 'parent':
-        return {
-            'access_reports': True,
-        }
     
     # Try cache first
     cache_key = get_cache_key(user.id)
@@ -98,7 +91,7 @@ def has_publisher_permission(user, permission_type):
         return False
     
     # Admin users always have permission
-    if user.is_staff or user.is_superuser or user.role == 'admin':
+    if user.is_staff or user.is_superuser or user.role.upper() == 'ADMIN':
         return True
     
     permissions = load_publisher_permissions(user)
@@ -180,21 +173,19 @@ class PublisherQuerysetMixin:
         except (AttributeError, AssertionError):
             # If parent doesn't have queryset, build it from scratch
             # This handles views that don't define a queryset attribute
-            from gam_accounts.models import MCMInvitation
-            queryset = MCMInvitation.objects.all()
+            # Simplified for managed inventory - no MCM invitations
+            queryset = []
         
         # Admin users see everything
-        if self.request.user.is_staff or self.request.user.is_superuser or self.request.user.role == 'admin':
+        if self.request.user.is_staff or self.request.user.is_superuser or self.request.user.role.upper() == 'ADMIN':
             return queryset
         
         # Publisher users only see assigned accounts
-        if self.request.user.role == 'publisher':
-            from gam_accounts.models import AssignedPublisherChildAccount
-            
+        if self.request.user.role.upper() == 'PUBLISHER':
+            # Simplified for managed inventory - no assigned accounts
             # Get assigned invitation IDs
-            assigned_ids = AssignedPublisherChildAccount.objects.filter(
-                publisher=self.request.user
-            ).values_list('invitation_id', flat=True)
+            # Simplified for managed inventory - no assigned accounts
+            assigned_ids = []
             
             # Filter queryset by assigned invitations
             # This works for models that have 'invitation' FK
@@ -202,10 +193,8 @@ class PublisherQuerysetMixin:
                 queryset = queryset.filter(invitation_id__in=list(assigned_ids))
             # For models with 'child_network_code'
             elif hasattr(queryset.model, 'child_network_code'):
-                from gam_accounts.models import MCMInvitation
-                assigned_codes = MCMInvitation.objects.filter(
-                    id__in=list(assigned_ids)
-                ).values_list('child_network_code', flat=True)
+                # Simplified for managed inventory - no assigned accounts
+                assigned_codes = []
                 queryset = queryset.filter(child_network_code__in=list(assigned_codes))
             # For MCMInvitation model itself
             elif queryset.model.__name__ == 'MCMInvitation':
@@ -228,40 +217,20 @@ def get_assigned_child_network_codes(user):
         return []
     
     # Admin users have access to all
-    if user.is_staff or user.is_superuser or user.role == 'admin':
+    if user.is_staff or user.is_superuser or user.role.upper() == 'ADMIN':
         return None  # None means "all"
     
-    from gam_accounts.models import AssignedPublisherChildAccount, MCMInvitation
-    
+    # Simplified for managed inventory - no assigned accounts
     # Get assigned invitation IDs
-    assigned_ids = AssignedPublisherChildAccount.objects.filter(
-        publisher=user
-    ).values_list('invitation_id', flat=True)
+    # Simplified for managed inventory - no assigned accounts
+    assigned_ids = []
     
-    # Get network codes
-    network_codes = MCMInvitation.objects.filter(
-        id__in=list(assigned_ids)
-    ).values_list('child_network_code', flat=True)
+    # Simplified for managed inventory - no assigned accounts
+    network_codes = []
     
     return list(network_codes)
 
 
-def can_modify_gam_status(user):
-    """
-    Check if user can modify GAM status
-    Only admin users can change GAM status
-    
-    Args:
-        user: User object
-    
-    Returns:
-        bool: True if user can modify GAM status
-    """
-    if not user or not user.is_authenticated:
-        return False
-    
-    # Only admins can modify GAM status
-    return user.is_staff or user.is_superuser or user.role == 'admin'
 
 
 def get_parent_network_for_user(user):

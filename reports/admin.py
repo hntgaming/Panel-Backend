@@ -4,20 +4,20 @@ from .models import MasterMetaData, ReportSyncLog
 class MasterMetaDataAdmin(admin.ModelAdmin):
     list_display = [
         'date', 'child_network_code', 'dimension_type', 'dimension_value',
-        'impressions', 'revenue', 'ecpm', 'partner_id'
+        'impressions', 'revenue', 'ecpm', 'publisher_id'
     ]
     list_filter = [
-        'dimension_type', 'date', 'parent_network', 
+        'dimension_type', 'date', 'parent_network_code', 
         'created_at', 'updated_at'
     ]
     search_fields = [
         'child_network_code', 'dimension_value', 
-        'invitation__child_network_name'
+        'parent_network_code'
     ]
     readonly_fields = ['created_at', 'updated_at']
     fieldsets = (
         ('Source Information', {
-            'fields': ('parent_network', 'invitation', 'child_network_code', 'partner_id')
+            'fields': ('parent_network_code', 'child_network_code', 'publisher_id')
         }),
         ('Dimension Data', {
             'fields': ('date', 'dimension_type', 'dimension_value')

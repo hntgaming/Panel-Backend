@@ -7,7 +7,7 @@ from django.contrib.auth.password_validation import validate_password
 from django.core.validators import RegexValidator
 
 from core.models import StatusChoices
-from .models import User,PartnerPermission
+from .models import User, PublisherPermission
 from .services import send_welcome_email_with_reset_link
 
 class UserRegistrationSerializer(serializers.ModelSerializer):
@@ -56,6 +56,9 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
             'company_name',
             'role',
             'permissions',
+            'revenue_share_percentage',
+            'site_url',
+            'network_id',
             'email_notifications',
             'slack_notifications',
             'slack_webhook_url'
@@ -65,7 +68,7 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
             'first_name': {'required': True},
             'last_name': {'required': True},
             'company_name': {'required': False, 'allow_blank': True},
-            'role': {'default': User.UserRole.PARTNER}
+            'role': {'default': User.UserRole.PUBLISHER}
         }
 
     def validate_email(self, value):
@@ -115,7 +118,7 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
         return value
 
     def validate_permissions(self, value):
-        valid_permissions = dict(PartnerPermission.PermissionChoices.choices).keys()
+        valid_permissions = dict(PublisherPermission.PermissionChoices.choices).keys()
 
         for item in value:
             if not isinstance(item, dict):
@@ -165,7 +168,7 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
                             "permissions": [f"Invalid parent_gam_network ID: {item['parent_gam_network']}"]
                         })
 
-                PartnerPermission.objects.create(
+                PublisherPermission.objects.create(
                     user=user,
                     permission=permission,
                     parent_gam_network=parent_network
@@ -339,14 +342,14 @@ class ChangePasswordSerializer(serializers.Serializer):
         return user
     
 
-class PartnerPermissionSerializer(serializers.ModelSerializer):
+class PublisherPermissionSerializer(serializers.ModelSerializer):
     class Meta:
-        model = PartnerPermission
+        model = PublisherPermission
         fields = ['permission', 'parent_gam_network']
 
 
-class PartnerListSerializer(serializers.ModelSerializer):
+class PublisherListSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ['id', 'company_name', 'email', 'status', 'date_joined']
+        fields = ['id', 'company_name', 'email', 'status', 'date_joined', 'revenue_share_percentage', 'site_url', 'network_id']
 

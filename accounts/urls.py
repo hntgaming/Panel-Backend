@@ -4,7 +4,7 @@ URL patterns for accounts app - Enhanced for GAM Platform
 from django.urls import path
 from rest_framework_simplejwt.views import TokenRefreshView
 
-from . import views, rbac_views
+from . import views
 
 app_name = 'accounts'
 
@@ -41,13 +41,10 @@ urlpatterns = [
 
     path('partners/<int:partner_id>/delete/', views.delete_partner_user, name='delete-partner-user'),
 
-    # RBAC endpoints (Admin only)
-    path('rbac/permissions/', rbac_views.PermissionListView.as_view(), name='rbac-permissions'),
-    path('rbac/role-permissions/', rbac_views.RolePermissionListView.as_view(), name='rbac-role-permissions'),
-    path('rbac/users/<int:user_id>/permissions/', rbac_views.UserPermissionOverridesView.as_view(), name='rbac-user-permissions'),
-    path('rbac/partners/<int:partner_id>/publishers/', rbac_views.PartnerPublisherAccessView.as_view(), name='rbac-partner-publishers'),
-    path('rbac/parents/<int:parent_id>/network/', rbac_views.ParentNetworkAssignmentView.as_view(), name='rbac-parent-network'),
-    path('rbac/audit-logs/', rbac_views.PermissionAuditLogView.as_view(), name='rbac-audit-logs'),
-    path('rbac/me/claims/', rbac_views.user_claims_view, name='rbac-user-claims'),
+    # Publisher management endpoints
+    path('publishers/', views.list_publishers, name='list_publishers'),
+    path('publishers/<int:user_id>/permissions/', views.get_publisher_permissions, name='get_publisher_permissions'),
+    path('users/<int:user_id>/permissions/', views.update_publisher_permissions, name='update_publisher_permissions'),
+    path('publishers/<int:user_id>/delete/', views.delete_publisher_user, name='delete_publisher_user'),
 
 ]

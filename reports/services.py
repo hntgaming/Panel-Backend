@@ -15,11 +15,10 @@ from django.conf import settings
 from googleads import ad_manager
 from googleads import errors as gam_errors
 
-from gam_accounts.services import GAMNetworkService
-from gam_accounts.models import GAMNetwork, MCMInvitation, AssignedPublisherChildAccount
+from .gam_client import GAMClientService
+from accounts.models import User
 from .models import MasterMetaData, ReportSyncLog
 from .constants import dimension_map, metrics, dimension_metrics
-# Removed smart_alerts import - no longer needed
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +86,7 @@ class GAMReportService:
     def fetch_gam_reports(date_from=None, date_to=None, triggered_by=None):
         """
         Main cron job function - fetch reports for all eligible child networks
-        UPDATED: New dimension mappings, unknown revenue logic for desktop devices
+        UPDATED: New dimension mappings for managed inventory publisher dashboard
         """
         # Set default date range (last 4 days)
         if not date_from:
@@ -107,7 +106,7 @@ class GAMReportService:
             is_manual=triggered_by is not None
         )
         
-        logger.info(f"🚀 Starting GAM report sync {sync_id} for {date_from} to {date_to} (with unknown revenue logic for desktop)")
+        logger.info(f"🚀 Starting GAM report sync {sync_id} for {date_from} to {date_to}")
         
         try:
             # Get eligible child networks for main reports (invited/approved/accepted status)
@@ -147,17 +146,7 @@ class GAMReportService:
                     logger.error(f"❌ Failed to process child network {invitation.child_network_code}: {error_msg}")
                     sync_log.add_network_error(invitation.child_network_code, error_msg)
             
-            # 🆕 UNKNOWN REVENUE PROCESSING - Mark desktop devices as unknown
-            try:
-                logger.info(f"💻 Processing unknown revenue for desktop devices ({date_from} to {date_to})")
-                unknown_processed = GAMReportService._process_unknown_revenue_for_desktop(
-                    eligible_invitations, date_from, date_to
-                )
-                logger.info(f"✅ Unknown revenue processing completed: {unknown_processed} records updated")
-                
-            except Exception as e:
-                logger.error(f"❌ Unknown revenue processing failed: {str(e)}")
-                # Don't fail the entire sync if unknown revenue processing fails
+            # All processing completed successfully
             
             # Overview records are now created per account during _process_child_network
             
@@ -165,7 +154,6 @@ class GAMReportService:
             sync_log.mark_completed(successful_count, failed_count, total_records_created, total_records_updated)
             logger.info(f"🎉 Sync {sync_id} completed: {successful_count} success, {failed_count} failed")
 
-            # Smart alerts removed - no longer needed for managed inventory publisher dashboard
 
             return {
                 'success': True,
@@ -213,8 +201,6 @@ class GAMReportService:
             yaml_filepath = os.path.join(settings.BASE_DIR, 'yaml_files', f"{yaml_network_code}.yaml")
             if not os.path.exists(yaml_filepath):
                 logger.warning(f"⚠️ YAML file not found: {yaml_filepath}")
-                # Update service account status to inactive
-                GAMReportService._update_service_account_status(invitation, False, "YAML file not found")
                 raise FileNotFoundError(f"YAML file not found: {yaml_filepath}")
             
             logger.info(f"✅ Using YAML file: {yaml_filepath}")
@@ -224,8 +210,6 @@ class GAMReportService:
                 client = GAMReportService._get_child_network_client(child_network_code)
                 logger.info(f"🔐 Authentication successful for {child_network_code} via {yaml_network_code}")
                 
-                # Update service account status to active since we can access GAM
-                GAMReportService._update_service_account_status(invitation, True, "GAM accessible")
                 
             except Exception as client_error:
                 error_message = str(client_error)
@@ -236,7 +220,6 @@ class GAMReportService:
                     'AuthenticationError.NO_NETWORKS_TO_ACCESS',
                     'NO_NETWORKS_TO_ACCESS',
                     'AuthenticationError',
-                    'service_account',
                     'authentication',
                     'unauthorized',
                     'forbidden',
@@ -244,8 +227,6 @@ class GAMReportService:
                     'access denied'
                 ]):
                     logger.warning(f"🚫 Authentication error detected for {child_network_code} - skipping account and disabling service key")
-                    # Update service account status to inactive
-                    GAMReportService._update_service_account_status(invitation, False, f"Authentication error: {error_message}")
                     # Return early with no records - skip all dimensions
                     return {
                         'records_created': 0,
@@ -253,14 +234,12 @@ class GAMReportService:
                         'skipped_due_to_auth_error': True
                     }
                 else:
-                    # For other errors, still update status but don't skip
-                    GAMReportService._update_service_account_status(invitation, False, f"GAM authentication failed: {error_message}")
                     raise
             
             records_created = 0
             records_updated = 0
             
-            # Process device category first for unknown revenue logic
+            # Process device category first
             device_category_processed = False
             
             # Process each dimension type (including overview with DATE dimension)
@@ -298,7 +277,6 @@ class GAMReportService:
                         'AuthenticationError.NO_NETWORKS_TO_ACCESS',
                         'NO_NETWORKS_TO_ACCESS',
                         'AuthenticationError',
-                        'service_account',
                         'authentication',
                         'unauthorized',
                         'forbidden',
@@ -311,8 +289,6 @@ class GAMReportService:
                     
                     if is_auth_error:
                         logger.warning(f"🚫 Authentication error detected in main loop for {child_network_code} - skipping account and disabling service key")
-                        # Update service account status to inactive
-                        GAMReportService._update_service_account_status(invitation, False, f"Authentication error: {error_message}")
                         # Return early with current records - skip all remaining dimensions
                         return {
                             'records_created': records_created,
@@ -323,8 +299,7 @@ class GAMReportService:
                         # For other errors, continue to next dimension
                         continue
             
-            # Note: Unknown metrics are now processed globally after all child networks are processed
-            # This matches the sub-reports logic exactly
+            # All metrics processing completed for this child network
             
             return {
                 'records_created': records_created,
@@ -337,10 +312,10 @@ class GAMReportService:
 
     @staticmethod
     def _get_child_network_client(child_network_code):
-        """Get GAM client directly for child network (no parent dependency)"""
+        """Get GAM client for child network using parent YAML configuration"""
         try:
-            # Try to get client directly for the child network
-            return GAMNetworkService.get_googleads_client(child_network_code)
+            # Use parent YAML configuration for all managed inventory operations
+            return GAMClientService.get_googleads_client(child_network_code)
         except Exception as e:
             logger.warning(f"⚠️ Failed to get client for {child_network_code}: {str(e)}")
             raise
@@ -409,7 +384,6 @@ class GAMReportService:
                     'AuthenticationError.NO_NETWORKS_TO_ACCESS',
                     'NO_NETWORKS_TO_ACCESS',
                     'AuthenticationError',
-                    'service_account',
                     'authentication',
                     'unauthorized',
                     'forbidden',
@@ -422,8 +396,6 @@ class GAMReportService:
                 
                 if is_auth_error:
                     logger.warning(f"🚫 Authentication error detected during report fetch for {invitation.child_network_code} - skipping account and disabling service key")
-                    # Update service account status to inactive
-                    GAMReportService._update_service_account_status(invitation, False, f"Authentication error during report fetch: {error_message}")
                     # Return early with no records - skip this dimension and all future dimensions
                     return {
                         'records_created': 0,
@@ -459,27 +431,7 @@ class GAMReportService:
                     headers, rows[1:], invitation, dimension_key, date_from, date_to
                 )
 
-                # STAGE 1: Enrich unknown (desktop) metrics per dimension value using DEVICE_CATEGORY_NAME
-                # This replicates the sub-reports logic exactly
-                try:
-                    unknown_map = GAMReportService._aggregate_unknown_per_dimension(
-                        client, invitation, dimension_key, date_from, date_to
-                    )
-                    for rec in processed_records:
-                        dim_val = rec.get('dimension_value')
-                        # For overview dimension, use None key since we aggregate by date
-                        if dimension_key == 'overview':
-                            u = unknown_map.get(None)
-                        else:
-                            u = unknown_map.get(dim_val)
-                        if u:
-                            rec['unknown_revenue'] = GAMReportService._quantize(Decimal(str(u.get('revenue', 0))), 2)
-                            rec['unknown_impressions'] = int(u.get('impressions', 0))
-                            rec['unknown_clicks'] = int(u.get('clicks', 0))
-                            rec['unknown_ecpm'] = GAMReportService._quantize(Decimal(str(u.get('ecpm', 0))), 2)
-                            rec['unknown_ctr'] = GAMReportService._quantize(Decimal(str(u.get('ctr', 0))), 2)
-                except Exception as e:
-                    logger.warning(f"⚠️ Unknown enrichment failed for {dimension_key}: {e}")
+                # Process dimension data
 
                 for record_data in processed_records:
                     if record_data:
@@ -510,7 +462,7 @@ class GAMReportService:
     @staticmethod
     def _get_dimension_values(dimension_key):
         """
-        Get realistic dimension values for testing
+        Get realistic dimension values for testing - Updated for Managed Inventory Publisher Dashboard
         """
         dimension_values_map = {
             'overview': ['Total'],
@@ -518,191 +470,12 @@ class GAMReportService:
             'trafficSource': ['Direct', 'Google Search', 'Facebook', 'Twitter', 'Email'],
             'deviceCategory': ['Desktop', 'Mobile', 'Tablet'],
             'country': ['United States', 'Canada', 'United Kingdom', 'Germany', 'France'],
-            'carrier': ['Verizon (US)', 'AT&T (US)', 'Rogers (CA)', 'Vodafone (UK)', 'Deutsche Telekom (DE)'],
+            'adunit': ['Leaderboard', 'Banner', 'Skyscraper', 'Rectangle', 'Mobile Banner'],
+            'inventoryFormat': ['Display', 'Video', 'Mobile', 'Native', 'Rich Media'],
             'browser': ['Chrome', 'Safari', 'Firefox', 'Edge', 'Opera']
         }
 
-        return dimension_values_map.get(dimension_key, ['Unknown'])
-
-    @staticmethod
-    def _calculate_unknown_metrics(child_network_code, dimension_key, dimension_value, base_impressions, base_revenue, base_clicks, current_date):
-        """
-        FIXED: Calculate unknown metrics properly per account instead of copying desktop totals
-        """
-        unknown_revenue = Decimal('0')
-        unknown_impressions = 0
-        unknown_clicks = 0
-        unknown_ecpm = Decimal('0')
-        unknown_ctr = Decimal('0')
-
-        try:
-            # Get total desktop impressions for this account on this date
-            desktop_records = MasterMetaData.objects.filter(
-                child_network_code=child_network_code,
-                dimension_type='deviceCategory',
-                dimension_value='Desktop',
-                date=current_date
-            ).first()
-
-            if desktop_records:
-                # Calculate unknown metrics as a percentage of desktop traffic
-                # This simulates the portion of desktop traffic that couldn't be properly attributed
-                unknown_percentage = Decimal(str(random.uniform(0.05, 0.25)))  # 5-25% of desktop traffic is "unknown"
-                
-                unknown_impressions = int(float(desktop_records.impressions) * float(unknown_percentage))
-                unknown_revenue = Decimal(str(round(float(desktop_records.revenue * unknown_percentage), 2)))
-                unknown_clicks = int(float(desktop_records.clicks) * float(unknown_percentage))
-                
-                if unknown_impressions > 0:
-                    unknown_ecpm = Decimal(str(round(float((unknown_revenue / unknown_impressions) * 1000), 2)))
-                    unknown_ctr = Decimal(str(round(float((unknown_clicks / unknown_impressions) * 100), 2)))
-            
-            # For device category dimensions, also check if this is a mobile/tablet record
-            # and calculate unknown metrics based on the account's overall unknown traffic
-            if dimension_key == 'deviceCategory' and dimension_value in ['Mobile', 'Tablet']:
-                # Get account's total unknown traffic for this date
-                account_unknown = MasterMetaData.objects.filter(
-                    child_network_code=child_network_code,
-                    dimension_type='overview',
-                    date=current_date
-                ).first()
-                
-                if account_unknown and account_unknown.unknown_impressions > 0:
-                    # Distribute unknown metrics proportionally to this device's traffic
-                    device_ratio = base_impressions / max(account_unknown.impressions, 1)
-                    unknown_impressions = int(account_unknown.unknown_impressions * device_ratio)
-                    unknown_revenue = Decimal(str(round(float(account_unknown.unknown_revenue * Decimal(str(device_ratio))), 2)))
-                    unknown_clicks = int(account_unknown.unknown_clicks * device_ratio)
-                    
-                    if unknown_impressions > 0:
-                        unknown_ecpm = Decimal(str(round(float((unknown_revenue / unknown_impressions) * 1000), 2)))
-                        unknown_ctr = Decimal(str(round(float((unknown_clicks / unknown_impressions) * 100), 2)))
-
-        except Exception as e:
-            logger.warning(f"Error calculating unknown metrics for {child_network_code}: {e}")
-            # Fallback to zero values
-            pass
-
-        return unknown_revenue, unknown_impressions, unknown_clicks, unknown_ecpm, unknown_ctr
-
-    @staticmethod
-    def _aggregate_unknown_per_dimension(client, invitation, dimension_key, date_from, date_to):
-        """
-        REPLICATED: Build report for (dimension + DEVICE_CATEGORY_NAME); aggregate rows where device=Desktop.
-        Returns: {dimension_value: {revenue, impressions, clicks, ecpm, ctr}}.
-        Uses the specified dimension for aggregation.
-        """
-        # Dimensions to request
-        base_dims = list(GAMReportService.DIMENSION_MAP.get(dimension_key, []))
-        if not base_dims:
-            return {}
-        # Ensure we do not duplicate DEVICE_CATEGORY_NAME
-        dims = list(base_dims)
-        if "DEVICE_CATEGORY_NAME" not in dims:
-            dims.append("DEVICE_CATEGORY_NAME")
-        # Support composite key fields by keeping the full list
-        key_field = base_dims
-
-        # Child filter when MANAGE_INVENTORY
-        filter_statement = None
-        if invitation.delegation_type == 'MANAGE_INVENTORY':
-            filter_statement = {
-                'query': 'WHERE CHILD_NETWORK_CODE = :childNetworkCode',
-                'values': [
-                    {
-                        'key': 'childNetworkCode',
-                        'value': {'xsi_type': 'TextValue', 'value': str(invitation.child_network_code)}
-                    }
-                ]
-            }
-
-        report_query = {
-            'dimensions': dims,
-            'columns': [
-                'AD_EXCHANGE_LINE_ITEM_LEVEL_IMPRESSIONS',
-                'AD_EXCHANGE_LINE_ITEM_LEVEL_REVENUE',
-                'AD_EXCHANGE_LINE_ITEM_LEVEL_CLICKS',
-            ],
-            'dateRangeType': 'CUSTOM_DATE',
-            'startDate': date_from,
-            'endDate': date_to,
-            'reportCurrency': 'USD',  # Force USD currency for all reports
-        }
-        if filter_statement:
-            report_query['statement'] = filter_statement
-        report_job = {'reportQuery': report_query}
-
-        downloader = client.GetDataDownloader(version="v202508")
-        job_id = downloader.WaitForReport(report_job)
-        with tempfile.TemporaryFile() as fp:
-            downloader.DownloadReportToFile(job_id, 'GZIPPED_CSV', fp, include_totals_row=True)
-            fp.seek(0)
-            text = gzip.decompress(fp.read()).decode('utf-8', errors='ignore')
-
-        reader = csv.reader(io.StringIO(text))
-        rows = list(reader)
-        if len(rows) <= 1:
-            return {}
-        headers = [c.replace('Dimension.', '').replace('Column.', '') for c in rows[0]]
-        data_rows = rows[1:]
-
-        try:
-            dc_idx = headers.index('DEVICE_CATEGORY_NAME')
-        except ValueError:
-            return {}
-
-        # indexes for metrics
-        def idx(name):
-            try:
-                return headers.index(name)
-            except ValueError:
-                return None
-        imp_i = idx('AD_EXCHANGE_LINE_ITEM_LEVEL_IMPRESSIONS')
-        rev_i = idx('AD_EXCHANGE_LINE_ITEM_LEVEL_REVENUE')
-        clk_i = idx('AD_EXCHANGE_LINE_ITEM_LEVEL_CLICKS')
-        # Build indexes for composite key
-        key_idx = []
-        if key_field:
-            fields = key_field if isinstance(key_field, list) else [key_field]
-            for kf in fields:
-                try:
-                    key_idx.append(headers.index(kf))
-                except ValueError:
-                    pass
-
-        desktop_aliases = {'desktop', 'Desktop', 'DESKTOP', 'Computer', 'PC'}
-        agg = {}
-        for row in data_rows:
-            if len(row) <= dc_idx:
-                continue
-            device_val = (row[dc_idx] or '').strip()
-            if device_val not in desktop_aliases:
-                continue
-            # Build key value
-            vals = []
-            for i in key_idx:
-                if i is not None and len(row) > i:
-                    vals.append(str(row[i]))
-            key_val = " | ".join(vals) if vals else None
-            imp = int(float(row[imp_i] or 0)) if imp_i is not None else 0
-            raw_rev = float(row[rev_i] or 0) if rev_i is not None else 0.0
-            clk = int(float(row[clk_i] or 0)) if clk_i is not None else 0
-            # Convert micros to currency using proper method
-            rev = float(GAMReportService._convert_micros_to_currency(raw_rev))
-            entry = agg.setdefault(key_val, {'revenue': 0.0, 'impressions': 0, 'clicks': 0})
-            entry['revenue'] += rev
-            entry['impressions'] += imp
-            entry['clicks'] += clk
-
-        # finalize eCPM and CTR
-        for k, v in agg.items():
-            imp = v['impressions']
-            rev = v['revenue']
-            clk = v['clicks']
-            v['ecpm'] = (rev / imp * 1000) if imp > 0 else 0.0
-            v['ctr'] = (clk / imp * 100) if imp > 0 else 0.0
-
-        return agg
+        return dimension_values_map.get(dimension_key, ['All'])
 
     @staticmethod
     def _process_report_data(headers, report_data, invitation, dimension_key, date_from, date_to):
@@ -731,13 +504,13 @@ class GAMReportService:
                     # Skip this totals row
                     continue
                 
-                # Get dimension value; support composite dimensions (e.g., country + carrier)
+                # Get dimension value
                 dimension_value = None
                 dim_cols = GAMReportService.DIMENSION_MAP.get(dimension_key, [])
                 if dim_cols:
                     parts = []
                     for col in dim_cols:
-                        parts.append(str(row_dict.get(col, 'Unknown')))
+                        parts.append(str(row_dict.get(col, 'All')))
                     dimension_value = " | ".join(parts)
                 
                 # Convert and process data - use all available API data directly
@@ -793,11 +566,6 @@ class GAMReportService:
                     'ctr': ctr,
                     'total_ad_requests': total_ad_requests,
                     'viewable_impressions_rate': viewable_impressions_rate,
-                    'unknown_revenue': Decimal('0'),
-                    'unknown_impressions': 0,
-                    'unknown_clicks': 0,
-                    'unknown_ecpm': Decimal('0'),
-                    'unknown_ctr': Decimal('0')
                 }
                 
                 processed_records.append(record_data)
@@ -833,11 +601,6 @@ class GAMReportService:
                         'ctr': data['ctr'],
                         'total_ad_requests': data['total_ad_requests'],
                         'viewable_impressions_rate': data['viewable_impressions_rate'],
-                        'unknown_revenue': data['unknown_revenue'],
-                        'unknown_impressions': data['unknown_impressions'],
-                        'unknown_clicks': data['unknown_clicks'],
-                        'unknown_ecpm': data['unknown_ecpm'],
-                        'unknown_ctr': data['unknown_ctr']
                     }
                 )
             else:
@@ -858,11 +621,6 @@ class GAMReportService:
                         'ctr': data['ctr'],
                         'total_ad_requests': data['total_ad_requests'],
                         'viewable_impressions_rate': data['viewable_impressions_rate'],
-                        'unknown_revenue': data['unknown_revenue'],
-                        'unknown_impressions': data['unknown_impressions'],
-                        'unknown_clicks': data['unknown_clicks'],
-                        'unknown_ecpm': data['unknown_ecpm'],
-                        'unknown_ctr': data['unknown_ctr']
                     }
                 )
             
@@ -913,434 +671,11 @@ class GAMReportService:
             from decimal import ROUND_HALF_UP
             return Decimal('0').quantize(Decimal('1').scaleb(-places), rounding=ROUND_HALF_UP)
 
-    @staticmethod
-    def _aggregate_unknown_per_dimension(client, invitation, dimension_key, date_from, date_to):
-        """
-        STAGE 1: Build report for (dimension + DEVICE_CATEGORY_NAME); aggregate rows where device=Desktop.
-        Returns: {dimension_value: {revenue, impressions, clicks, ecpm, ctr}}.
-        Uses the specified dimension for aggregation.
-        REPLICATED FROM SUB-REPORTS with date structure instead of timeframe
-        """
-        # Dimensions to request
-        base_dims = list(GAMReportService.DIMENSION_MAP.get(dimension_key, []))
-        if not base_dims:
-            return {}
-        # Ensure we do not duplicate DEVICE_CATEGORY_NAME
-        dims = list(base_dims)
-        if "DEVICE_CATEGORY_NAME" not in dims:
-            dims.append("DEVICE_CATEGORY_NAME")
-        # Support composite key fields by keeping the full list
-        key_field = base_dims
 
-        # Child filter when MANAGE_INVENTORY
-        filter_statement = None
-        if invitation.delegation_type == 'MANAGE_INVENTORY':
-            filter_statement = {
-                'query': 'WHERE CHILD_NETWORK_CODE = :childNetworkCode',
-                'values': [
-                    {
-                        'key': 'childNetworkCode',
-                        'value': {'xsi_type': 'TextValue', 'value': str(invitation.child_network_code)}
-                    }
-                ]
-            }
-
-        report_query = {
-            'dimensions': dims,
-            'columns': [
-                'AD_EXCHANGE_LINE_ITEM_LEVEL_IMPRESSIONS',
-                'AD_EXCHANGE_LINE_ITEM_LEVEL_REVENUE',
-                'AD_EXCHANGE_LINE_ITEM_LEVEL_CLICKS',
-            ],
-            'dateRangeType': 'CUSTOM_DATE',
-            'startDate': date_from,
-            'endDate': date_to,
-            'reportCurrency': 'USD',  # Force USD currency for all reports
-        }
-        if filter_statement:
-            report_query['statement'] = filter_statement
-        report_job = {'reportQuery': report_query}
-
-        downloader = client.GetDataDownloader(version="v202508")
-        job_id = downloader.WaitForReport(report_job)
-        with tempfile.TemporaryFile() as fp:
-            downloader.DownloadReportToFile(job_id, 'GZIPPED_CSV', fp, include_totals_row=True)
-            fp.seek(0)
-            text = gzip.decompress(fp.read()).decode('utf-8', errors='ignore')
-
-        reader = csv.reader(io.StringIO(text))
-        rows = list(reader)
-        if len(rows) <= 1:
-            return {}
-        headers = [c.replace('Dimension.', '').replace('Column.', '') for c in rows[0]]
-        data_rows = rows[1:]
-
-        try:
-            dc_idx = headers.index('DEVICE_CATEGORY_NAME')
-        except ValueError:
-            return {}
-
-        # indexes for metrics
-        def idx(name):
-            try:
-                return headers.index(name)
-            except ValueError:
-                return None
-        imp_i = idx('AD_EXCHANGE_LINE_ITEM_LEVEL_IMPRESSIONS')
-        rev_i = idx('AD_EXCHANGE_LINE_ITEM_LEVEL_REVENUE')
-        clk_i = idx('AD_EXCHANGE_LINE_ITEM_LEVEL_CLICKS')
-        # Build indexes for composite key
-        key_idx = []
-        if key_field:
-            fields = key_field if isinstance(key_field, list) else [key_field]
-            for kf in fields:
-                try:
-                    key_idx.append(headers.index(kf))
-                except ValueError:
-                    pass
-
-        desktop_aliases = {'desktop', 'Desktop', 'DESKTOP', 'Computer', 'PC'}
-        agg = {}
-        for row in data_rows:
-            if len(row) <= dc_idx:
-                continue
-            device_val = (row[dc_idx] or '').strip()
-            if device_val not in desktop_aliases:
-                continue
-            # Build key value
-            vals = []
-            for i in key_idx:
-                if i is not None and len(row) > i:
-                    vals.append(str(row[i]))
-            key_val = " | ".join(vals) if vals else None
-            imp = int(float(row[imp_i] or 0)) if imp_i is not None else 0
-            raw_rev = float(row[rev_i] or 0) if rev_i is not None else 0.0
-            clk = int(float(row[clk_i] or 0)) if clk_i is not None else 0
-            # Convert micros to currency using proper method
-            rev = float(GAMReportService._convert_micros_to_currency(raw_rev))
-            entry = agg.setdefault(key_val, {'revenue': 0.0, 'impressions': 0, 'clicks': 0})
-            entry['revenue'] += rev
-            entry['impressions'] += imp
-            entry['clicks'] += clk
-
-        # finalize eCPM and CTR
-        for k, v in agg.items():
-            imp = v['impressions']
-            rev = v['revenue']
-            clk = v['clicks']
-            v['ecpm'] = (rev / imp * 1000) if imp > 0 else 0.0
-            v['ctr'] = (clk / imp * 100) if imp > 0 else 0.0
-
-        return agg
-
-    @staticmethod
-    def _process_unknown_revenue_for_desktop(eligible_invitations, date_from, date_to):
-        """
-        STAGE 2: Process unknown revenue by moving desktop device data to unknown fields
-        REPLICATED FROM SUB-REPORTS with date structure instead of timeframe
-        """
-        unknown_records_updated = 0
-        
-        try:
-            logger.info(f"🔍 Processing unknown revenue for {len(eligible_invitations)} accounts")
-            
-            # First, get all desktop device records and store their data
-            device_records = MasterMetaData.objects.filter(
-                invitation__in=eligible_invitations,
-                date__range=[date_from, date_to],
-                dimension_type='deviceCategory'
-            )
-            
-            # Find desktop device records and store their data
-            desktop_data = {}
-            for record in device_records:
-                device_category = record.dimension_value or ''
-                desktop_categories = ['Desktop', 'DESKTOP', 'desktop', 'Computer', 'COMPUTER', 'PC']
-                
-                if any(desktop_cat in device_category for desktop_cat in desktop_categories):
-                    # Store desktop data by invitation and date
-                    key = (record.invitation.id, record.date)
-                    desktop_data[key] = {
-                        'revenue': record.revenue,
-                        'impressions': record.impressions,
-                        'clicks': record.clicks,
-                        'ecpm': record.ecpm,
-                        'ctr': record.ctr
-                    }
-            
-            logger.info(f"📊 Found {len(desktop_data)} desktop device records with data")
-            
-            # Now process all dimensions (copy desktop data to unknown section)
-            dimension_types = ['overview', 'site', 'trafficSource', 'country', 'carrier', 'browser', 'country_carrier']
-            
-            for dimension_type in dimension_types:
-                logger.info(f"🔍 Processing unknown revenue for dimension: {dimension_type}")
-                
-                # Get all records for this dimension
-                dimension_records = MasterMetaData.objects.filter(
-                    invitation__in=eligible_invitations,
-                    date__range=[date_from, date_to],
-                    dimension_type=dimension_type
-                )
-                
-                # For each record in this dimension, add desktop data to unknown fields
-                for record in dimension_records:
-                    key = (record.invitation.id, record.date)
-                    if key in desktop_data:
-                        desktop_info = desktop_data[key]
-                        
-                        # Add desktop metrics to unknown fields
-                        record.unknown_revenue = desktop_info['revenue']
-                        record.unknown_impressions = desktop_info['impressions']
-                        record.unknown_clicks = desktop_info['clicks']
-                        record.unknown_ecpm = desktop_info['ecpm']
-                        record.unknown_ctr = desktop_info['ctr']
-                        
-                        record.save()
-                        unknown_records_updated += 1
-                        
-                        logger.debug(f"💻 Added desktop data to unknown for {dimension_type}: {record.child_network_code} - ${desktop_info['revenue']}")
-            
-            # Finally, clear the original desktop device category records
-            for record in device_records:
-                device_category = record.dimension_value or ''
-                desktop_categories = ['Desktop', 'DESKTOP', 'desktop', 'Computer', 'COMPUTER', 'PC']
-                
-                if any(desktop_cat in device_category for desktop_cat in desktop_categories):
-                    record.revenue = Decimal('0')
-                    record.impressions = 0
-                    record.clicks = 0
-                    record.ecpm = Decimal('0')
-                    record.ctr = Decimal('0')
-                    record.save()
-            
-            logger.info(f"✅ Unknown revenue processing completed: {unknown_records_updated} records updated")
-            return unknown_records_updated
-            
-        except Exception as e:
-            logger.error(f"❌ Unknown revenue processing failed: {str(e)}")
-            return 0
 
     # Sub-reports functionality removed - no longer needed for managed inventory publisher dashboard
 
 
-    @staticmethod
-    def _update_service_account_status(invitation, is_enabled, reason=""):
-        """
-        Update ONLY the service account status (service_account_enabled field) for the child network - DO NOT change GAM Status
-        Also triggers Service Account Inaccessible Alert when service account is disabled
-        """
-        try:
-            # Update ONLY the child network's service account status (stored on MCMInvitation)
-            invitation.service_account_enabled = is_enabled
-            invitation.save()
-            
-            # Log the service key status change (DO NOT change invitation status)
-            if is_enabled:
-                logger.info(f"✅ Service Key Status ENABLED for {invitation.child_network_code} - GAM Status remains '{invitation.status}'")
-            else:
-                logger.warning(f"❌ Service Key Status DISABLED for {invitation.child_network_code} - GAM Status remains '{invitation.status}' (Reason: {reason})")
-                
-                # Log service account status change
-                logger.info(f"📝 Service account status changed for {invitation.child_network_code}: {reason}")
-                    
-        except Exception as e:
-            logger.error(f"❌ Failed to update service key status for {invitation.child_network_code}: {str(e)}")
 
-    # Smart alerts functionality removed - no longer needed for managed inventory publisher dashboard
 
-    @staticmethod
-    def _process_unknown_metrics_for_all_dimensions(client, invitation, date_from, date_to):
-        """
-        Process unknown metrics for all dimensions using device category + other dimensions (same as sub-reports)
-        For each dimension (except deviceCategory), fetch data with both that dimension AND DEVICE_CATEGORY_NAME
-        Filter for Desktop devices and apply as unknown metrics
-        """
-        records_created = 0
-        records_updated = 0
-        
-        # Process each dimension except deviceCategory itself
-        for dimension_key in GAMReportService.DIMENSION_MAP.keys():
-            if dimension_key == 'deviceCategory':
-                continue  # Skip deviceCategory itself
-                
-            try:
-                logger.info(f"📊 Processing unknown metrics for dimension: {dimension_key}")
-                
-                # Get unknown metrics for this dimension
-                unknown_map = GAMReportService._aggregate_unknown_per_dimension(
-                    client, invitation, dimension_key, date_from, date_to
-                )
-                
-                if not unknown_map:
-                    logger.info(f"📭 No unknown metrics found for {dimension_key}")
-                    continue
-                
-                # Apply unknown metrics to existing records for this dimension
-                for dimension_value, unknown_data in unknown_map.items():
-                    try:
-                        # Find existing record for this dimension and date
-                        existing_record = MasterMetaData.objects.filter(
-                            child_network_code=invitation.child_network_code,
-                            dimension_type=dimension_key,
-                            dimension_value=dimension_value,
-                            date__range=[date_from, date_to]
-                        ).first()
-                        
-                        if existing_record:
-                            # Update existing record with unknown metrics
-                            existing_record.unknown_revenue = GAMReportService._quantize(Decimal(str(unknown_data.get('revenue', 0))), 2)
-                            existing_record.unknown_impressions = int(unknown_data.get('impressions', 0))
-                            existing_record.unknown_clicks = int(unknown_data.get('clicks', 0))
-                            existing_record.unknown_ecpm = GAMReportService._quantize(Decimal(str(unknown_data.get('ecpm', 0))), 2)
-                            existing_record.unknown_ctr = GAMReportService._quantize(Decimal(str(unknown_data.get('ctr', 0))), 2)
-                            existing_record.save()
-                            records_updated += 1
-                            logger.info(f"✅ Updated unknown metrics for {dimension_key}={dimension_value}")
-                        else:
-                            logger.warning(f"⚠️ No existing record found for {dimension_key}={dimension_value}")
-                            
-                    except Exception as e:
-                        logger.warning(f"⚠️ Failed to update unknown metrics for {dimension_key}={dimension_value}: {str(e)}")
-                        continue
-                        
-            except Exception as e:
-                logger.warning(f"⚠️ Failed to process unknown metrics for dimension {dimension_key}: {str(e)}")
-                continue
-        
-        return {
-            'records_created': records_created,
-            'records_updated': records_updated
-        }
 
-    @staticmethod
-    def _aggregate_unknown_per_dimension(client, invitation, dimension_key, date_from, date_to):
-        """
-        Build report for (dimension + DEVICE_CATEGORY_NAME); aggregate rows where device=Desktop.
-        Returns: {dimension_value: {revenue, impressions, clicks, ecpm, ctr}}.
-        Uses the specified dimension for aggregation (same logic as sub-reports).
-        """
-        # Dimensions to request
-        base_dims = list(GAMReportService.DIMENSION_MAP.get(dimension_key, []))
-        if not base_dims:
-            return {}
-            
-        # Ensure we do not duplicate DEVICE_CATEGORY_NAME
-        dims = list(base_dims)
-        if "DEVICE_CATEGORY_NAME" not in dims:
-            dims.append("DEVICE_CATEGORY_NAME")
-            
-        # Support composite key fields by keeping the full list
-        # For overview dimension, we don't need a key field since we aggregate by date
-        if dimension_key == 'overview':
-            key_field = None  # Overview aggregates by date, no specific dimension key needed
-        else:
-            key_field = base_dims
-
-        # Child filter when MANAGE_INVENTORY
-        filter_statement = None
-        if invitation.delegation_type == 'MANAGE_INVENTORY':
-            filter_statement = {
-                'query': 'WHERE CHILD_NETWORK_CODE = :childNetworkCode',
-                'values': [
-                    {
-                        'key': 'childNetworkCode',
-                        'value': {'xsi_type': 'TextValue', 'value': str(invitation.child_network_code)}
-                    }
-                ]
-            }
-
-        report_query = {
-            'dimensions': dims,
-            'columns': [
-                'AD_EXCHANGE_LINE_ITEM_LEVEL_IMPRESSIONS',
-                'AD_EXCHANGE_LINE_ITEM_LEVEL_REVENUE',
-                'AD_EXCHANGE_LINE_ITEM_LEVEL_CLICKS',
-            ],
-            'dateRangeType': 'CUSTOM_DATE',
-            'startDate': date_from,
-            'endDate': date_to,
-            'reportCurrency': 'USD',  # Force USD currency for all reports
-        }
-        if filter_statement:
-            report_query['statement'] = filter_statement
-        report_job = {'reportQuery': report_query}
-
-        downloader = client.GetDataDownloader(version="v202508")
-        job_id = downloader.WaitForReport(report_job)
-        
-        with tempfile.TemporaryFile() as fp:
-            downloader.DownloadReportToFile(job_id, 'GZIPPED_CSV', fp, include_totals_row=True)
-            fp.seek(0)
-            text = gzip.decompress(fp.read()).decode('utf-8', errors='ignore')
-
-        reader = csv.reader(io.StringIO(text))
-        rows = list(reader)
-        if len(rows) <= 1:
-            return {}
-            
-        headers = [c.replace('Dimension.', '').replace('Column.', '') for c in rows[0]]
-        data_rows = rows[1:]
-
-        try:
-            dc_idx = headers.index('DEVICE_CATEGORY_NAME')
-        except ValueError:
-            return {}
-
-        # indexes for metrics
-        def idx(name):
-            try:
-                return headers.index(name)
-            except ValueError:
-                return None
-        imp_i = idx('AD_EXCHANGE_LINE_ITEM_LEVEL_IMPRESSIONS')
-        rev_i = idx('AD_EXCHANGE_LINE_ITEM_LEVEL_REVENUE')
-        clk_i = idx('AD_EXCHANGE_LINE_ITEM_LEVEL_CLICKS')
-        
-        # Build indexes for composite key
-        key_idx = []
-        if key_field:
-            fields = key_field if isinstance(key_field, list) else [key_field]
-            for kf in fields:
-                try:
-                    key_idx.append(headers.index(kf))
-                except ValueError:
-                    pass
-
-        desktop_aliases = {'desktop', 'Desktop', 'DESKTOP', 'Computer', 'PC'}
-        agg = {}
-        for row in data_rows:
-            if len(row) <= dc_idx:
-                continue
-            device_val = (row[dc_idx] or '').strip()
-            if device_val not in desktop_aliases:
-                continue
-                
-            # Build key value
-            vals = []
-            for i in key_idx:
-                if i is not None and len(row) > i:
-                    vals.append(str(row[i]))
-            key_val = " | ".join(vals) if vals else None
-            
-            imp = int(float(row[imp_i] or 0)) if imp_i is not None else 0
-            raw_rev = float(row[rev_i] or 0) if rev_i is not None else 0.0
-            clk = int(float(row[clk_i] or 0)) if clk_i is not None else 0
-            
-            # Convert micros to currency using proper method
-            rev = float(GAMReportService._convert_micros_to_currency(raw_rev))
-            
-            entry = agg.setdefault(key_val, {'revenue': 0.0, 'impressions': 0, 'clicks': 0})
-            entry['revenue'] += rev
-            entry['impressions'] += imp
-            entry['clicks'] += clk
-
-        # finalize eCPM and CTR
-        for k, v in agg.items():
-            imp = v['impressions']
-            rev = v['revenue']
-            clk = v['clicks']
-            v['ecpm'] = (rev / imp * 1000) if imp > 0 else 0.0
-            v['ctr'] = (clk / imp * 100) if imp > 0 else 0.0
-
-        return agg

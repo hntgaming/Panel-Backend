@@ -16,11 +16,12 @@ from django.contrib.auth.tokens import default_token_generator
 from django.utils.http import urlsafe_base64_decode
 from django.contrib.auth.password_validation import validate_password
 from core.models import StatusChoices
-from gam_accounts.models import GAMNetwork
+# Removed gam_accounts dependencies
 
-from .models import PartnerPermission, User
+from .models import PublisherPermission, User
+from .permissions import load_publisher_permissions
 from .serializers import (
-    PartnerListSerializer,
+    PublisherListSerializer,
     UserRegistrationSerializer,
     UserLoginSerializer,
     UserProfileSerializer,
@@ -37,7 +38,7 @@ class IsAdminUser(permissions.BasePermission):
         return (
             request.user and 
             request.user.is_authenticated and 
-            request.user.role == 'ADMIN'
+            request.user.role.upper() == 'ADMIN'
         )
 
 
@@ -176,56 +177,24 @@ def user_permissions_view(request):
     Get current user's permissions
     GET /api/auth/me/permissions
     """
-    from .rbac_service import RBACService
-    
     user = request.user
     
-    # Get effective permissions using new RBAC service
-    effective_permissions = RBACService.get_effective_permissions(user)
-    
-    # Get user scope
-    scope = RBACService.get_user_scope(user)
+    # Simplified permissions for managed inventory
+    effective_permissions = load_publisher_permissions(user)
     
     # Convert permissions to frontend-compatible format
     permissions = {}
     for perm in effective_permissions:
         permissions[perm] = True
     
-    # Get assigned accounts count
-    assigned_count = 0
-    if scope['publisher_ids'] is not None:
-        assigned_count = len(scope['publisher_ids'])
-    else:
-        # Admin sees all
-        from gam_accounts.models import MCMInvitation
-        assigned_count = MCMInvitation.objects.count()
-    
-    # Get parent network info for parent users
-    parent_network_info = None
-    if user.role == 'parent' and scope['parent_network_id']:
-        from gam_accounts.models import GAMNetwork
-        try:
-            parent_network = GAMNetwork.objects.get(id=scope['parent_network_id'])
-            parent_network_info = {
-                'id': parent_network.id,
-                'name': parent_network.network_name,
-                'code': parent_network.network_code,
-            }
-        except GAMNetwork.DoesNotExist:
-            pass
-    
     return Response({
         'user_id': user.id,
         'email': user.email,
         'role': user.role,
         'status': user.status,
-        'is_admin': user.role == 'ADMIN',
+        'is_admin': user.role.upper() == 'ADMIN',
         'permissions': permissions,
-        'assigned_accounts_count': assigned_count,
-        'parent_network': parent_network_info,
-        'can_modify_gam_status': user.role == 'ADMIN',
-        'permissions_version': user.permissions_version,
-        'effective_permissions': list(effective_permissions),
+        'can_modify_gam_status': user.role.upper() == 'ADMIN',
     })
 
 
@@ -287,7 +256,7 @@ def user_dashboard_view(request):
             'total_users': User.objects.count(),
             'active_users': User.objects.filter(status='active').count(),
             'admin_users': User.objects.filter(role='admin').count(),
-            'partner_users': User.objects.filter(role='partner').count(),
+            'publisher_users': User.objects.filter(role='publisher').count(),
         }
         dashboard_data['admin_features'] = {
             'can_manage_all_networks': True,
@@ -299,17 +268,16 @@ def user_dashboard_view(request):
         # Parent sees data for their network only
         parent_network_id = scope.get('parent_network_id')
         if parent_network_id:
-            from gam_accounts.models import GAMNetwork, MCMInvitation
-            parent_network = GAMNetwork.objects.get(id=parent_network_id)
-            child_networks = MCMInvitation.objects.filter(parent_network=parent_network)
+            # Simplified for managed inventory - no parent network logic
+            child_networks = []
             
             dashboard_data['network_stats'] = {
-                'network_name': parent_network.network_name,
-                'total_child_networks': child_networks.count(),
-                'active_child_networks': child_networks.filter(status='active').count(),
-                'total_partners': User.objects.filter(role='partner').count(),  # All partners for now
+                'network_name': 'Managed Inventory Network',
+                'total_child_networks': 0,
+                'active_child_networks': 0,
+                'total_publishers': User.objects.filter(role='publisher').count(),  # All publishers for now
             }
-    elif user.role.upper() == 'PARTNER':
+    elif user.role.upper() == 'PUBLISHER':
         # Partner sees only their assigned data
         publisher_ids = scope.get('publisher_ids', [])
         assigned_count = len(publisher_ids) if publisher_ids is not None else 0
@@ -424,7 +392,7 @@ def update_partner_permissions(request, user_id):
     }
     """
     try:
-        user = User.objects.get(id=user_id, role='partner')
+        user = User.objects.get(id=user_id, role='publisher')
     except User.DoesNotExist:
         return Response({"error": "Partner not found."}, status=status.HTTP_404_NOT_FOUND)
 
@@ -432,7 +400,7 @@ def update_partner_permissions(request, user_id):
     if not isinstance(permission_items, list):
         return Response({"error": "permissions must be a list"}, status=400)
 
-    valid_permissions = dict(PartnerPermission.PermissionChoices.choices).keys()
+    valid_permissions = dict(PublisherPermission.PermissionChoices.choices).keys()
 
     new_permissions = []
     for item in permission_items:
@@ -452,17 +420,17 @@ def update_partner_permissions(request, user_id):
         else:
             parent_network = None
 
-        new_permissions.append(PartnerPermission(
+        new_permissions.append(PublisherPermission(
             user=user,
             permission=permission,
             parent_gam_network=parent_network
         ))
 
     # Delete existing permissions
-    PartnerPermission.objects.filter(user=user).delete()
+    PublisherPermission.objects.filter(user=user).delete()
 
     # Bulk create
-    PartnerPermission.objects.bulk_create(new_permissions)
+    PublisherPermission.objects.bulk_create(new_permissions)
 
     return Response({"message": "Permissions updated successfully"})
 
@@ -471,16 +439,16 @@ def update_partner_permissions(request, user_id):
 @permission_classes([IsAuthenticated])  # Or AdminOnlyPermission
 def get_partner_permissions(request, user_id):
     try:
-        user = User.objects.get(id=user_id, role='partner')
+        user = User.objects.get(id=user_id, role='publisher')
     except User.DoesNotExist:
         return Response({"error": "Partner not found"}, status=status.HTTP_404_NOT_FOUND)
 
-    permissions = PartnerPermission.objects.filter(user=user)
+    permissions = PublisherPermission.objects.filter(user=user)
 
     permissions_data = []
     for perm in permissions:
         entry = {"permission": perm.permission}
-        if perm.permission == PartnerPermission.PermissionChoices.MCM_INVITES and perm.parent_gam_network:
+        if perm.permission == PublisherPermission.PermissionChoices.MANAGED_ACCOUNTS and perm.parent_gam_network:
             entry["parent_gam_network"] = {
                 "id": perm.parent_gam_network.id,
                 "network_code": perm.parent_gam_network.network_code,
@@ -503,8 +471,8 @@ def list_partners(request):
     GET /api/auth/partners/
     List all partner users for admin dashboard
     """
-    partners = User.objects.filter(role='partner').order_by('-date_joined')
-    serializer = PartnerListSerializer(partners, many=True)
+    partners = User.objects.filter(role='publisher').order_by('-date_joined')
+    serializer = PublisherListSerializer(partners, many=True)
     return Response(serializer.data, status=status.HTTP_200_OK)
 
 
@@ -564,7 +532,7 @@ def delete_partner_user(request, partner_id):
     Permanently delete a partner user and all associated data.
     """
     try:
-        partner = User.objects.get(id=partner_id, role='partner')  # Optional: filter by role
+        partner = User.objects.get(id=partner_id, role='publisher')  # Optional: filter by role
         email = partner.email
         partner.delete()
         return Response({
@@ -656,3 +624,105 @@ def change_password_view(request):
         'success': True,
         'message': 'Password changed successfully'
     }, status=status.HTTP_200_OK)
+
+
+# Simplified publisher management functions for managed inventory
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated, IsAdminUser])
+def list_publishers(request):
+    """
+    GET /api/auth/publishers/ - List all publishers
+    """
+    try:
+        publishers = User.objects.filter(role='publisher').order_by('-date_joined')
+        serializer = PublisherListSerializer(publishers, many=True)
+        return Response(serializer.data)
+    except Exception as e:
+        return Response({
+            'error': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated, IsAdminUser])
+def get_publisher_permissions(request, user_id):
+    """
+    GET /api/auth/publishers/{user_id}/permissions/ - Get publisher permissions
+    """
+    try:
+        publisher = User.objects.get(id=user_id, role='publisher')
+        permissions = PublisherPermission.objects.filter(user=publisher)
+        permission_list = [p.permission for p in permissions]
+        
+        return Response({
+            'user_id': publisher.id,
+            'email': publisher.email,
+            'permissions': permission_list
+        })
+    except User.DoesNotExist:
+        return Response({
+            'error': 'Publisher not found'
+        }, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({
+            'error': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['PATCH'])
+@permission_classes([IsAuthenticated, IsAdminUser])
+def update_publisher_permissions(request, user_id):
+    """
+    PATCH /api/auth/users/{user_id}/permissions/ - Update publisher permissions
+    """
+    try:
+        publisher = User.objects.get(id=user_id, role='publisher')
+        permissions = request.data.get('permissions', [])
+        
+        # Clear existing permissions
+        PublisherPermission.objects.filter(user=publisher).delete()
+        
+        # Add new permissions
+        for permission in permissions:
+            PublisherPermission.objects.create(
+                user=publisher,
+                permission=permission
+            )
+        
+        return Response({
+            'success': True,
+            'message': 'Permissions updated successfully'
+        })
+    except User.DoesNotExist:
+        return Response({
+            'error': 'Publisher not found'
+        }, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({
+            'error': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated, IsAdminUser])
+def delete_publisher_user(request, user_id):
+    """
+    DELETE /api/auth/publishers/{user_id}/delete/ - Delete publisher
+    """
+    try:
+        publisher = User.objects.get(id=user_id, role='publisher')
+        publisher.delete()
+        
+        return Response({
+            'success': True,
+            'message': 'Publisher deleted successfully'
+        })
+    except User.DoesNotExist:
+        return Response({
+            'error': 'Publisher not found'
+        }, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({
+            'error': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

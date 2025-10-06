@@ -12,8 +12,7 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'multigam.settings')
 django.setup()
 
 from reports.services import GAMReportService
-from gam_accounts.models import MCMInvitation
-from smart_alerts.alert_rules import alert_manager
+# Removed gam_accounts dependencies
 
 logger = logging.getLogger(__name__)
 
@@ -66,17 +65,6 @@ class Command(BaseCommand):
             default=93,
             help='Number of accounts to process in each batch (default: 93 for all accounts)',
         )
-        parser.add_argument(
-            '--disable-service-key-check',
-            action='store_true',
-            help='Disable automatic service key status updates on GAM access errors',
-        )
-        parser.add_argument(
-            '--run-smart-alerts',
-            action='store_true',
-            default=True,
-            help='Run smart alerts processing after reports fetch (default: True)',
-        )
 
     def handle(self, *args, **options):
         self.stdout.write(
@@ -89,8 +77,6 @@ class Command(BaseCommand):
         parallel = options.get('parallel', True)  # Default to True
         max_workers = options.get('max_workers', 100)
         batch_size = options.get('batch_size', 93)
-        disable_service_key_check = options.get('disable_service_key_check', False)
-        run_smart_alerts = options.get('run_smart_alerts', True)
         
         if date_from:
             try:
@@ -126,7 +112,7 @@ class Command(BaseCommand):
             # Process GAM reports
             if parallel:
                 result = self._process_parallel(
-                    date_from, date_to, max_workers, batch_size, disable_service_key_check
+                    date_from, date_to, max_workers, batch_size
                 )
             else:
                 result = GAMReportService.fetch_gam_reports(
@@ -146,39 +132,6 @@ class Command(BaseCommand):
                     )
                 )
                 
-                # Run smart alerts processing if enabled
-                if run_smart_alerts:
-                    self.stdout.write(
-                        self.style.SUCCESS('🔔 Running Smart Alerts Processing...')
-                    )
-                    try:
-                        alert_result = alert_manager.run_all_alerts(date_from=date_from, date_to=date_to)
-                        
-                        self.stdout.write(
-                            self.style.SUCCESS(
-                                f'✅ Smart Alerts Processing Complete\n'
-                                f'   Date Range: {alert_result["date_from"]} to {alert_result["date_to"]}\n'
-                                f'   Total Alerts Triggered: {alert_result["total_alerts_triggered"]}\n'
-                                f'   Tickets Created: {alert_result["tickets_created"]}\n'
-                                f'   Breakdown:\n'
-                                f'     - Carrier Mismatches: {alert_result["breakdown"]["carrier_mismatches"]}\n'
-                                f'     - Service Account Issues: {alert_result["breakdown"]["service_account_issues"]}\n'
-                                f'     - Metric Alerts: {alert_result["breakdown"]["metric_alerts"]}'
-                            )
-                        )
-                        
-                        if alert_result['ticket_ids']:
-                            self.stdout.write(f'   Created Ticket IDs: {", ".join(map(str, alert_result["ticket_ids"]))}')
-                            
-                    except Exception as e:
-                        self.stdout.write(
-                            self.style.ERROR(f'❌ Smart Alerts Processing failed: {str(e)}')
-                        )
-                        logger.error(f'Smart alerts processing failed: {str(e)}', exc_info=True)
-                else:
-                    self.stdout.write(
-                        self.style.WARNING('⚠️ Smart Alerts Processing skipped (--run-smart-alerts=False)')
-                    )
             else:
                 self.stdout.write(
                     self.style.ERROR(f'❌ GAM Reports Sync failed: {result["error"]}')
@@ -191,13 +144,14 @@ class Command(BaseCommand):
             )
             raise CommandError(f'Report fetch failed: {str(e)}')
 
-    def _process_parallel(self, date_from, date_to, max_workers, batch_size, disable_service_key_check=False):
-        """Process all accounts in parallel with service key status handling"""
-        # Get all eligible invitations
-        eligible_invitations = MCMInvitation.objects.filter(
-            status__in=['accepted', 'approved', 'invited'],
-            service_account_enabled=True
-        ).select_related('parent_network')
+    def _process_parallel(self, date_from, date_to, max_workers, batch_size):
+        """Process all accounts in parallel"""
+        # For managed inventory, we'll use a simplified approach
+        # Get all child networks that have data in MasterMetaData
+        from reports.models import MasterMetaData
+        eligible_networks = MasterMetaData.objects.values_list(
+            'child_network_code', flat=True
+        ).distinct()
         
         total_accounts = eligible_invitations.count()
         self.stdout.write(f'📊 Found {total_accounts} eligible accounts')
@@ -220,7 +174,6 @@ class Command(BaseCommand):
         
         start_time = time.time()
         results = []
-        service_key_errors = []  # Track accounts with service key errors
         
         # Ensure max_workers doesn't exceed API quota
         actual_max_workers = min(max_workers, MAX_CONCURRENT_REQUESTS)
@@ -232,7 +185,7 @@ class Command(BaseCommand):
         with concurrent.futures.ThreadPoolExecutor(max_workers=actual_max_workers) as executor:
             # Submit all batches with API quota compliance
             future_to_batch = {
-                executor.submit(self._process_batch_with_quota, batch, date_from, date_to, disable_service_key_check): batch                                                                                                            
+                executor.submit(self._process_batch_with_quota, batch, date_from, date_to): batch                                                                                                            
                 for batch in batches
             }
             
@@ -243,10 +196,6 @@ class Command(BaseCommand):
                     batch_results = future.result()
                     results.extend(batch_results)
                     
-                    # Track service key errors
-                    for result in batch_results:
-                        if not result['success'] and result.get('is_service_key_error', False):
-                            service_key_errors.append(result['account'])
                     
                     # Log progress
                     completed = len(results)
@@ -268,16 +217,6 @@ class Command(BaseCommand):
         end_time = time.time()
         duration = end_time - start_time
         
-        # Handle service key errors - set status to inactive
-        if service_key_errors and not disable_service_key_check:
-            self.stdout.write(f'🔧 Setting service key status to inactive for {len(service_key_errors)} accounts with GAM access errors')
-            try:
-                MCMInvitation.objects.filter(
-                    child_network_code__in=service_key_errors
-                ).update(service_account_enabled=False)
-                self.stdout.write(f'✅ Updated service key status for {len(service_key_errors)} accounts')
-            except Exception as e:
-                self.stdout.write(f'⚠️ Failed to update service key status: {str(e)}')
         
         # Calculate summary
         successful = sum(1 for r in results if r['success'])
@@ -287,10 +226,8 @@ class Command(BaseCommand):
         # Process unknown revenue after all accounts are processed
         self.stdout.write('🔍 Processing unknown revenue for all accounts...')
         try:
-            unknown_processed = GAMReportService._process_unknown_revenue_for_desktop(
-                eligible_invitations, date_from, date_to
-            )
-            self.stdout.write(f'✅ Unknown revenue processing completed: {unknown_processed} records updated')
+            # Unknown revenue processing removed for Managed Inventory Publisher Dashboard
+            self.stdout.write('✅ Report fetching completed (unknown metrics processing removed)')
         except Exception as e:
             self.stdout.write(f'❌ Unknown revenue processing failed: {str(e)}')
         
@@ -311,7 +248,7 @@ class Command(BaseCommand):
             'total_records_updated': 0
         }
 
-    def _process_batch_with_quota(self, batch, date_from, date_to, disable_service_key_check=False):
+    def _process_batch_with_quota(self, batch, date_from, date_to):
         """Process a batch of accounts with API quota compliance"""
         batch_results = []
         
@@ -345,18 +282,12 @@ class Command(BaseCommand):
                     self.style.ERROR(f'❌ {invitation.child_network_code}: {error_message}')
                 )
                 
-                # Check if it's a service key error
-                is_service_key_error = any(keyword in error_message.lower() for keyword in [
-                    'service_account', 'authentication', 'unauthorized', 'forbidden',
-                    'invalid credentials', 'access denied', 'no networks to access'
-                ])
                 
                 batch_results.append({
                     'account': invitation.child_network_code,
                     'success': False,
                     'error': error_message,
                     'records_created': 0,
-                    'is_service_key_error': is_service_key_error
                 })
         
         return batch_results
@@ -441,8 +372,6 @@ class Command(BaseCommand):
                     parallel=True,  # Enable parallel processing
                     max_workers=MAX_CONCURRENT_REQUESTS,  # API quota compliant
                     batch_size=50,  # Smaller batches for cron jobs
-                    disable_service_key_check=False,  # Allow service key status updates
-                    run_smart_alerts=True  # Run smart alerts after reports
                 )
 
                 end_time = timezone.now()

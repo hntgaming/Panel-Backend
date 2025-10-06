@@ -17,7 +17,7 @@ def api_root(request):
         'version': '1.0',
         'endpoints': {
             'authentication': '/api/auth/',
-            'gam_accounts': '/api/gam/',  # Added GAM endpoints
+            # GAM endpoints removed - simplified for managed inventory
             'admin_panel': '/admin/',
             'api_docs': '/api/docs/' if hasattr(settings, 'DEBUG') and settings.DEBUG else None,
         },
@@ -57,8 +57,7 @@ urlpatterns = [
     # API Authentication (JWT-based, no CSRF needed)
     path('api/auth/', include('accounts.urls')),
     
-    # GAM Accounts API - Phase 2 (NOW ACTIVE!)
-    path('api/gam/', include('gam_accounts.urls')),
+    # GAM Accounts API removed - simplified for managed inventory
     
     # Reports API
     path('api/reports/', include('reports.urls')),

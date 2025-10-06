@@ -4,7 +4,7 @@ User management models - Updated for GAM Platform
 from django.contrib.auth.models import AbstractUser
 from django.db import models
 from core.models import TimeStampedModel, StatusChoices
-from gam_accounts.models import GAMNetwork
+# Removed gam_accounts dependencies
 
 class User(AbstractUser, TimeStampedModel):
     """
@@ -15,7 +15,6 @@ class User(AbstractUser, TimeStampedModel):
     class UserRole(models.TextChoices):
         ADMIN = 'admin', 'Admin User'
         PUBLISHER = 'publisher', 'Publisher User'
-        PARENT = 'parent', 'Parent Network User'
     
     # Basic user information
     email = models.EmailField(unique=True)
@@ -27,7 +26,7 @@ class User(AbstractUser, TimeStampedModel):
         max_length=20,
         choices=UserRole.choices,
         default=UserRole.PUBLISHER,
-        help_text="Admin: Full access. Publisher: Permission-based. Parent: Network-scoped access."
+        help_text="Admin: Full access. Publisher: Permission-based."
     )
     
     # User status
@@ -49,6 +48,18 @@ class User(AbstractUser, TimeStampedModel):
     # Account management
     last_login_ip = models.GenericIPAddressField(null=True, blank=True)
     password_changed_at = models.DateTimeField(null=True, blank=True)
+    
+    # Revenue sharing
+    revenue_share_percentage = models.DecimalField(
+        max_digits=5, 
+        decimal_places=2, 
+        default=10.00,
+        help_text="Percentage of revenue that goes to the parent network (0-100%)"
+    )
+    
+    # Publisher website information
+    site_url = models.URLField(blank=True, help_text="Publisher's website URL")
+    network_id = models.CharField(max_length=50, blank=True, help_text="Publisher's GAM network ID")
     
     # RBAC versioning for cache invalidation
     permissions_version = models.IntegerField(default=1, help_text="Version number for permission cache invalidation")
@@ -84,17 +95,12 @@ class User(AbstractUser, TimeStampedModel):
         """Check if user is publisher"""
         return self.role.upper() == 'PUBLISHER'
     
-    @property
-    def is_parent_user(self):
-        """Check if user is parent network user"""
-        return self.role.upper() == 'PARENT'
-    
     def save(self, *args, **kwargs):
         """Override save to handle role-based staff status"""
         # Admin users should be staff to access Django admin
         if self.role == self.UserRole.ADMIN:
             self.is_staff = True
-        elif self.role in [self.UserRole.PUBLISHER, self.UserRole.PARENT]:
+        elif self.role == self.UserRole.PUBLISHER:
             self.is_staff = False
         
         super().save(*args, **kwargs)
@@ -107,7 +113,7 @@ class PublisherPermission(models.Model):
         MANAGED_ACCOUNTS = 'managed_accounts', 'Managed Accounts'
         REPORTS = 'reports', 'Reports'
 
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='publisher_permissions')
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='publisher_permissions', null=True, blank=True)
     permission = models.CharField(max_length=50, choices=PermissionChoices.choices)
 
     class Meta:
@@ -159,7 +165,9 @@ class RolePermission(TimeStampedModel):
     permission = models.ForeignKey(
         Permission,
         on_delete=models.CASCADE,
-        related_name='role_permissions'
+        related_name='role_permissions',
+        null=True,
+        blank=True
     )
     
     class Meta:
@@ -178,12 +186,16 @@ class UserPermissionOverride(TimeStampedModel):
     user = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
-        related_name='permission_overrides'
+        related_name='permission_overrides',
+        null=True,
+        blank=True
     )
     permission = models.ForeignKey(
         Permission,
         on_delete=models.CASCADE,
-        related_name='user_overrides'
+        related_name='user_overrides',
+        null=True,
+        blank=True
     )
     allowed = models.BooleanField(
         help_text="True to grant permission, False to deny"
@@ -219,12 +231,15 @@ class PublisherAccountAccess(TimeStampedModel):
         User,
         on_delete=models.CASCADE,
         related_name='assigned_accounts',
-        limit_choices_to={'role': 'PUBLISHER'}
+        limit_choices_to={'role': 'PUBLISHER'},
+        null=True,
+        blank=True
     )
-    account = models.ForeignKey(
-        'gam_accounts.MCMInvitation',
-        on_delete=models.CASCADE,
-        related_name='assigned_publishers'
+    # Removed MCM invitation dependency - simplified for managed inventory
+    child_network_code = models.CharField(
+        max_length=20,
+        default='',
+        help_text="Child network code for managed inventory"
     )
     granted_by = models.ForeignKey(
         User,
@@ -241,11 +256,11 @@ class PublisherAccountAccess(TimeStampedModel):
     
     class Meta:
         db_table = 'rbac_publisher_account_access'
-        unique_together = ['publisher', 'account']
-        ordering = ['publisher__email', 'account__child_network_name']
+        unique_together = ['publisher', 'child_network_code']
+        ordering = ['publisher__email', 'child_network_code']
     
     def __str__(self):
-        return f"{self.publisher.email} -> {self.account.child_network_name}"
+        return f"{self.publisher.email} -> {self.child_network_code}"
 
 
 class ParentNetwork(TimeStampedModel):
@@ -256,12 +271,15 @@ class ParentNetwork(TimeStampedModel):
         User,
         on_delete=models.CASCADE,
         related_name='parent_network_assignment',
-        limit_choices_to={'role': 'PARENT'}
+        limit_choices_to={'role': 'PARENT'},
+        null=True,
+        blank=True
     )
-    parent_network = models.ForeignKey(
-        'gam_accounts.GAMNetwork',
-        on_delete=models.CASCADE,
-        related_name='parent_users'
+    # Removed parent network dependency - simplified for managed inventory
+    parent_network_code = models.CharField(
+        max_length=20,
+        default='',
+        help_text="Parent network code for managed inventory"
     )
     granted_by = models.ForeignKey(
         User,
@@ -277,7 +295,7 @@ class ParentNetwork(TimeStampedModel):
         ordering = ['user__email']
     
     def __str__(self):
-        return f"{self.user.email} -> {self.parent_network.network_name}"
+        return f"{self.user.email} -> {self.parent_network_code}"
 
 
 class PermissionAuditLog(TimeStampedModel):
@@ -300,7 +318,9 @@ class PermissionAuditLog(TimeStampedModel):
     target_user = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
-        related_name='permission_audit_logs'
+        related_name='permission_audit_logs',
+        null=True,
+        blank=True
     )
     permission = models.ForeignKey(
         Permission,
@@ -309,19 +329,16 @@ class PermissionAuditLog(TimeStampedModel):
         blank=True,
         related_name='audit_logs'
     )
-    account = models.ForeignKey(
-        'gam_accounts.MCMInvitation',
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='permission_audit_logs'
+    # Removed gam_accounts dependencies - simplified for managed inventory
+    child_network_code = models.CharField(
+        max_length=20,
+        default='',
+        help_text="Child network code for managed inventory"
     )
-    parent_network = models.ForeignKey(
-        'gam_accounts.GAMNetwork',
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='permission_audit_logs'
+    parent_network_code = models.CharField(
+        max_length=20,
+        default='',
+        help_text="Parent network code for managed inventory"
     )
     performed_by = models.ForeignKey(
         User,

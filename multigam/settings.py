@@ -52,7 +52,6 @@ THIRD_PARTY_APPS = [
 LOCAL_APPS = [
     'core',     # Base utilities
     'accounts',  # User management and authentication
-    'gam_accounts',
     'reports',  # Reporting and analytics
 ]
 
@@ -108,19 +107,28 @@ TEMPLATES = [
 WSGI_APPLICATION = 'multigam.wsgi.application'
 
 # Database
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.mysql',
-        'NAME': config('DB_NAME'),
-        'USER': config('DB_USER'),
-        'PASSWORD': config('DB_PASSWORD'),
-        'HOST': config('DB_HOST', default='localhost'),
-        'PORT': config('DB_PORT', default='3306'),
-        'OPTIONS': {
-            'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
-        },
+# Use SQLite for local development, MySQL for production
+if config('DEBUG', default=True, cast=bool):
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'managed_inventory.db',
+        }
     }
-}
+else:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.mysql',
+            'NAME': config('DB_NAME'),
+            'USER': config('DB_USER'),
+            'PASSWORD': config('DB_PASSWORD'),
+            'HOST': config('DB_HOST', default='localhost'),
+            'PORT': config('DB_PORT', default='3306'),
+            'OPTIONS': {
+                'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
+            },
+        }
+    }
 
 # Custom User Model
 AUTH_USER_MODEL = 'accounts.User'
@@ -297,11 +305,7 @@ if DEBUG:
                 'level': 'INFO',
                 'propagate': False,
             },
-            'gam_accounts': {
-                'handlers': ['console'],
-                'level': 'DEBUG',
-                'propagate': False,
-            },
+            # gam_accounts logging removed
         },
     }
 

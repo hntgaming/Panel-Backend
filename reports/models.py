@@ -3,17 +3,17 @@
 from django.db import models
 from django.utils import timezone
 from django.conf import settings
-from gam_accounts.models import MCMInvitation, GAMNetwork
+from accounts.models import User
 
 DIMENSION_CHOICES = [
     ('overview', 'Overview'),
-    ('site', 'App / Site'),  # Corrected: appSite -> site
+    ('site', 'App / Site'),
     ('trafficSource', 'Traffic Source'),
     ('deviceCategory', 'Device Category'),
     ('country', 'Country'),
-    ('carrier', 'Carrier / ISP'),
+    ('adunit', 'Ad Unit Name'),
+    ('inventoryFormat', 'Inventory Format'),
     ('browser', 'Browser'),
-    ('country_carrier', 'Country + Carrier'),  # Added for geo-spoofing detection
 ]
 
 class MasterMetaData(models.Model):
@@ -21,17 +21,11 @@ class MasterMetaData(models.Model):
     Unified reporting table for GAM analytics
     Optimized with proper indexing and validation
     """
-    # Source relationships
-    parent_network = models.ForeignKey(
-        GAMNetwork,
-        on_delete=models.CASCADE,
-        help_text="Parent GAM network that fetched this data",
-        db_index=True
-    )
-    invitation = models.ForeignKey(
-        MCMInvitation,
-        on_delete=models.CASCADE,
-        help_text="MCM invitation linking parent to child",
+    # Source relationships - simplified for managed inventory
+    parent_network_code = models.CharField(
+        max_length=20,
+        default='152344380',
+        help_text="Parent GAM network code",
         db_index=True
     )
 
@@ -116,35 +110,7 @@ class MasterMetaData(models.Model):
         help_text="Total ad requests"
     )
 
-    # 🆕 UNKNOWN REVENUE TRACKING (for desktop devices marked as unknown)
-    unknown_revenue = models.DecimalField(
-        max_digits=20, 
-        decimal_places=2, 
-        default=0,
-        help_text="Revenue from desktop devices marked as unknown"
-    )
-    unknown_impressions = models.BigIntegerField(
-        default=0,
-        help_text="Impressions from desktop devices marked as unknown"
-    )
-    unknown_clicks = models.BigIntegerField(
-        default=0,
-        help_text="Clicks from desktop devices marked as unknown"
-    )
-    unknown_ecpm = models.DecimalField(
-        max_digits=20, 
-        decimal_places=2, 
-        default=0,
-        help_text="eCPM from desktop devices marked as unknown"
-    )
-    unknown_ctr = models.DecimalField(
-        max_digits=10, 
-        decimal_places=2, 
-        default=0,
-        help_text="CTR from desktop devices marked as unknown"
-    )
-    
-    # Note: Using unknown fields for device category tracking
+    # Unknown metrics removed for Managed Inventory Publisher Dashboard
 
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
@@ -152,20 +118,17 @@ class MasterMetaData(models.Model):
 
     class Meta:
         db_table = "master_metadata"
-        unique_together = ("invitation", "date", "dimension_type", "dimension_value")
+        unique_together = ("child_network_code", "date", "dimension_type", "dimension_value")
         indexes = [
             models.Index(fields=["date"]),
             models.Index(fields=["dimension_type", "dimension_value"]),
-            models.Index(fields=["parent_network"]),
+            models.Index(fields=["parent_network_code"]),
             models.Index(fields=["child_network_code"]),
-            models.Index(fields=["invitation"]),
-            models.Index(fields=["partner_id"]),
-            models.Index(fields=["date", "dimension_type", "partner_id"]),
-            models.Index(fields=["parent_network", "date"]),
+            models.Index(fields=["publisher_id"]),
+            models.Index(fields=["date", "dimension_type", "publisher_id"]),
+            models.Index(fields=["parent_network_code", "date"]),
             models.Index(fields=["child_network_code", "date"]),
-            # 🆕 New indexes for unknown metrics
-            models.Index(fields=["date", "unknown_revenue"]),
-            models.Index(fields=["child_network_code", "unknown_revenue"]),
+            # Unknown metrics indexes removed
         ]
         ordering = ['-date', 'dimension_type']
 
@@ -209,33 +172,7 @@ class MasterMetaData(models.Model):
         """Return revenue formatted as USD"""
         return f"{self.revenue:.2f}"
 
-    # 🆕 Unknown revenue property for desktop devices
-    @property 
-    def unknown_revenue_usd(self):
-        """Return unknown revenue formatted as USD"""
-        return f"{self.unknown_revenue:.2f}"
-
-    # 🆕 New calculated properties (Already present in your version ✅)
-    @property
-    def total_revenue_usd(self):
-        """Return total revenue (matched + unknown) formatted as USD"""
-        total = self.revenue + self.unknown_revenue
-        return f"{total:.2f}"
-
-    @property
-    def match_rate(self):
-        """Calculate match rate (matched impressions / total impressions)"""
-        total_impressions = self.impressions + self.unknown_impressions
-        if total_impressions > 0:
-            return round((self.impressions / total_impressions) * 100, 2)
-        return 0
-
-    @property
-    def unknown_fill_rate(self):
-        """Calculate fill rate for unknown impressions"""
-        if self.total_ad_requests > 0:
-            return round((self.unknown_impressions / self.total_ad_requests) * 100, 2)
-        return 0
+    # Unknown metrics properties removed for Managed Inventory Publisher Dashboard
 
 
 

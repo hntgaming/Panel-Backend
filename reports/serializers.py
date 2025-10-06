@@ -5,7 +5,7 @@ from django.contrib.auth import get_user_model
 from datetime import datetime, timedelta
 from django.utils import timezone
 
-from gam_accounts.models import GAMNetwork, MCMInvitation
+# Removed gam_accounts dependencies
 from .models import MasterMetaData, ReportSyncLog
 
 User = get_user_model()
@@ -24,7 +24,7 @@ class MasterMetaDataSerializer(serializers.ModelSerializer):
     revenue_usd = serializers.ReadOnlyField()
     
     # Calculated fields for unknown revenue
-    unknown_revenue_usd = serializers.ReadOnlyField()
+    # Unknown metrics removed for Managed Inventory Publisher Dashboard
     total_revenue_usd = serializers.ReadOnlyField()
 
     # Partner information
@@ -44,9 +44,8 @@ class MasterMetaDataSerializer(serializers.ModelSerializer):
             'eligible_ad_requests', 'viewable_impressions_rate', 'total_ad_requests',
             'fill_rate',
             
-            # Unknown revenue metrics
-            'unknown_revenue', 'unknown_impressions', 'unknown_clicks', 'unknown_ecpm', 'unknown_ctr',
-            'unknown_revenue_usd', 'total_revenue_usd',
+            # Unknown metrics removed for Managed Inventory Publisher Dashboard
+            'total_revenue_usd',
             
             'created_at', 'updated_at'
         ]
@@ -82,11 +81,7 @@ class ReportAnalyticsSerializer(serializers.Serializer):
     total_clicks = serializers.IntegerField()
     average_ctr = serializers.DecimalField(max_digits=10, decimal_places=4)
     average_ecpm = serializers.DecimalField(max_digits=10, decimal_places=4)
-    total_unknown_revenue = serializers.DecimalField(max_digits=20, decimal_places=8)
-    total_unknown_impressions = serializers.IntegerField()
-    total_unknown_clicks = serializers.IntegerField()
-    average_unknown_ctr = serializers.DecimalField(max_digits=10, decimal_places=4)
-    average_unknown_ecpm = serializers.DecimalField(max_digits=10, decimal_places=4)
+    # Unknown metrics fields removed for Managed Inventory Publisher Dashboard
     total_networks = serializers.IntegerField()
     total_records = serializers.IntegerField()
 
@@ -137,7 +132,7 @@ class UnifiedReportsQuerySerializer(serializers.Serializer):
         help_text="Predefined timeframe for the report"
     )
     
-    # Dimensions array
+    # Dimensions array - Updated for Managed Inventory Publisher Dashboard
     dimensions = serializers.ListField(
         child=serializers.ChoiceField(choices=[
             ('overview', 'Overview'),
@@ -145,20 +140,20 @@ class UnifiedReportsQuerySerializer(serializers.Serializer):
             ('trafficSource', 'Traffic Source'),
             ('deviceCategory', 'Device Category'),
             ('country', 'Country'),
-            ('carrier', 'Carrier'),
+            ('adunit', 'Ad Unit Name'),
+            ('inventoryFormat', 'Inventory Format'),
             ('browser', 'Browser'),
-            ('country_carrier', 'Country-Carrier'),
         ]),
         required=False,
         default=['overview'],
         help_text="List of dimensions to include in the report"
     )
     
-    # Metrics string (comma-separated)
+    # Metrics string (comma-separated) - Updated for Managed Inventory Publisher Dashboard
     metrics = serializers.CharField(
         required=False,
-        default="impressions,revenue,ecpm,clicks,ctr,fill_rate,total_ad_requests,unknown_revenue,unknown_impressions,unknown_clicks,unknown_ecpm,unknown_ctr,viewable_impressions_rate",
-        help_text="Comma-separated list of metrics to include (standardized on 'unknown_*' naming)"
+        default="impressions,revenue,ecpm,clicks,ctr,fill_rate,total_ad_requests,viewable_impressions_rate",
+        help_text="Comma-separated list of metrics to include (unknown metrics removed)"
     )
     
     # Filters object
@@ -182,13 +177,10 @@ class UnifiedReportsQuerySerializer(serializers.Serializer):
     )
     
     def validate_metrics(self, value):
-        """Validate metrics string - supports unknown_* naming"""
+        """Validate metrics string - unknown metrics removed"""
         valid_metrics = [
             'impressions', 'revenue', 'ecpm', 'clicks', 'ctr', 'fill_rate',
-            'total_ad_requests', 'viewable_impressions_rate',
-            'unknown_revenue', 'unknown_impressions', 'unknown_clicks',
-            'unknown_ecpm', 'unknown_ctr', 'unknown_fill_rate',
-            'match_rate', 'total_revenue_usd'
+            'total_ad_requests', 'viewable_impressions_rate'
         ]
         
         metrics_list = [m.strip() for m in value.split(',')]

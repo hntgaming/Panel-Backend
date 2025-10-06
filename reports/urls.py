@@ -57,9 +57,5 @@ urlpatterns = [
         views.realtime_ivt_check_view,
         name='realtime-ivt-check'
     ),
-    path(
-        '<str:child_network_code>/vetting/',
-        views.get_vetting_analysis,
-        name='vetting-analysis'
-    ),
+    # Vetting analysis endpoint removed - not needed for Managed Inventory Publisher Dashboard
 ]

@@ -5,6 +5,7 @@
 # Includes: data listing, analytics, dashboard, export, and unified queries
 # =============================================================================
 
+from decimal import Decimal
 from rest_framework import status, generics
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.views import APIView
@@ -21,7 +22,7 @@ import logging
 # Local imports
 from accounts.models import User
 from accounts.views import IsAdminUser
-from gam_accounts.models import GAMNetwork, MCMInvitation, AssignedPartnerChildAccount
+# Removed gam_accounts dependencies - simplified for managed inventory
 from .models import MasterMetaData, ReportSyncLog
 from .services import GAMReportService
 from django.http import HttpResponse
@@ -78,45 +79,32 @@ class ReportDataListView(generics.ListAPIView):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        # Optimized queryset with proper select_related and prefetch_related
-        queryset = MasterMetaData.objects.select_related(
-            'parent_network',
-            'invitation',
-            'invitation__child_network'
-        ).prefetch_related(
-            'invitation__assignedpartnerchildaccount_set'
-        ).all()
+        # Simplified queryset for managed inventory
+        queryset = MasterMetaData.objects.all()
 
         user = self.request.user
 
         # Role-based filtering with optimized query
-        if user.role == 'parent':
-            # Parent users only see accounts from their parent network
-            from accounts.permissions import get_parent_network_for_user
-            parent_network = get_parent_network_for_user(user)
-            if parent_network:
-                queryset = queryset.filter(parent_network=parent_network)
+        if not user.is_admin_user:
+            # Publisher users see data based on their network_id
+            if hasattr(user, 'network_id') and user.network_id:
+                queryset = queryset.filter(parent_network_code=user.network_id)
             else:
-                queryset = queryset.none()  # No network assigned, show nothing
-        elif not user.is_admin_user:
-            # Partner users only see their assigned child networks
-            assigned_invitations = AssignedPartnerChildAccount.objects.filter(
-                partner=user
-            ).values_list('invitation_id', flat=True)
-            queryset = queryset.filter(invitation_id__in=assigned_invitations)
+                # If no network_id, return empty queryset
+                queryset = queryset.none()
         
         # Apply filters
         parent_network = self.request.query_params.get('parent_network')
         if parent_network:
-            queryset = queryset.filter(parent_network__network_code=parent_network)
+            queryset = queryset.filter(parent_network_code=parent_network)
         
         child_network = self.request.query_params.get('child_network')
         if child_network:
-            queryset = queryset.filter(child_network_code=child_network)
+            queryset = queryset.filter(parent_network_code=child_network)
         
-        partner_id = self.request.query_params.get('partner')
-        if partner_id:
-            queryset = queryset.filter(partner_id=partner_id)
+        publisher_id = self.request.query_params.get('publisher')
+        if publisher_id:
+            queryset = queryset.filter(parent_network_code=publisher_id)
         
         dimension_type = self.request.query_params.get('dimension_type')
         if dimension_type:
@@ -157,10 +145,11 @@ def report_analytics_view(request):
     # Base queryset with role-based filtering
     base_queryset = MasterMetaData.objects.all()
     if not user.is_admin_user:
-        assigned_invitations = AssignedPartnerChildAccount.objects.filter(
-            partner=user
-        ).values_list('invitation_id', flat=True)
-        base_queryset = base_queryset.filter(invitation_id__in=assigned_invitations)
+        # Publisher users see data based on their network_id
+        if hasattr(user, 'network_id') and user.network_id:
+            base_queryset = base_queryset.filter(parent_network_code=user.network_id)
+        else:
+            base_queryset = base_queryset.none()
     
     # Date range (default to last 30 days)
     date_to = timezone.now().date()
@@ -198,8 +187,7 @@ def report_analytics_view(request):
     
     # Network breakdown
     network_breakdown = queryset.values(
-        'parent_network__network_name',
-        'parent_network__network_code'
+        'parent_network_code'
     ).annotate(
         total_revenue=Sum('revenue'),
         total_impressions=Sum('impressions'),
@@ -217,8 +205,8 @@ def report_analytics_view(request):
     partner_breakdown = []
     if user.is_admin_user:
         partner_breakdown = queryset.filter(
-            partner_id__isnull=False
-        ).values('partner_id').annotate(
+            parent_network_code__isnull=False
+        ).values('parent_network_code').annotate(
             total_revenue=Sum('revenue'),
             total_impressions=Sum('impressions'),
             child_count=Count('child_network_code', distinct=True)
@@ -252,37 +240,7 @@ def report_analytics_view(request):
     return Response(analytics_data, status=status.HTTP_200_OK)
 
 
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def get_vetting_analysis(request, child_network_code):
-    """
-    GET /api/reports/{child_network_code}/vetting/ - Get vetting analysis for an account
-    """
-    from .rule import vetting_rules
-    from datetime import datetime, timedelta
-    
-    # Get date range from query params or default to last 30 days
-    date_from = request.query_params.get('date_from')
-    date_to = request.query_params.get('date_to')
-    
-    if not date_from or not date_to:
-        date_to = datetime.now().date()
-        date_from = date_to - timedelta(days=30)
-    
-    try:
-        analysis = vetting_rules.analyze_account(
-            child_network_code=child_network_code,
-            date_from=str(date_from),
-            date_to=str(date_to)
-        )
-        
-        return Response(analysis, status=status.HTTP_200_OK)
-        
-    except Exception as e:
-        return Response(
-            {'error': f'Failed to analyze account: {str(e)}'}, 
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR
-        )
+# Vetting analysis endpoint removed - not needed for Managed Inventory Publisher Dashboard
 
 
 # =============================================================================
@@ -358,10 +316,11 @@ def report_dashboard_view(request):
     # Base queryset with role-based filtering
     base_queryset = MasterMetaData.objects.all()
     if not user.is_admin_user:
-        assigned_invitations = AssignedPartnerChildAccount.objects.filter(
-            partner=user
-        ).values_list('invitation_id', flat=True)
-        base_queryset = base_queryset.filter(invitation_id__in=assigned_invitations)
+        # Publisher users see data based on their network_id
+        if hasattr(user, 'network_id') and user.network_id:
+            base_queryset = base_queryset.filter(parent_network_code=user.network_id)
+        else:
+            base_queryset = base_queryset.none()
     
     # Time periods
     today = timezone.now().date()
@@ -408,9 +367,9 @@ def report_dashboard_view(request):
         total_partners = User.objects.filter(role='partner').count()
     else:
         # Partner view
-        assigned_invitations = AssignedPartnerChildAccount.objects.filter(partner=user)
-        total_networks = assigned_invitations.values('invitation__parent_network').distinct().count()
-        active_children = assigned_invitations.count()
+        # Simplified for managed inventory - return default values
+        total_networks = 0
+        active_children = 0
         total_partners = 1  # Just themselves
     
     # Top performing networks (by revenue)
@@ -418,8 +377,7 @@ def report_dashboard_view(request):
         date__range=[week_ago, today],
         dimension_type='overview'
     ).values(
-        'parent_network__network_name',
-        'parent_network__network_code'
+        'parent_network_code'
     ).annotate(
         total_revenue=Sum('revenue'),
         total_impressions=Sum('impressions')
@@ -478,8 +436,11 @@ def realtime_ivt_check_view(request):
     # Base queryset with role-based filtering
     base = MasterMetaData.objects.filter(dimension_type='overview')
     if not request.user.is_admin_user:
-        assigned = AssignedPartnerChildAccount.objects.filter(partner=request.user).values_list('invitation_id', flat=True)
-        base = base.filter(invitation_id__in=list(assigned))
+        # Publisher users see data based on their network_id
+        if hasattr(request.user, 'network_id') and request.user.network_id:
+            base = base.filter(parent_network_code=request.user.network_id)
+        else:
+            base = base.none()
     if child_code:
         base = base.filter(child_network_code=child_code)
 
@@ -499,8 +460,6 @@ def realtime_ivt_check_view(request):
         ecpm=Coalesce(Avg('ecpm'), 0.0),
         ctr=Coalesce(Avg('ctr'), 0.0),
         viewability=Coalesce(Avg('viewable_impressions_rate'), 0.0),
-        unknown_revenue=Coalesce(Sum('unknown_revenue'), 0.0),
-        unknown_impressions=Coalesce(Sum('unknown_impressions'), 0),
     )
 
     # Historical baseline (last 7 days excluding today)
@@ -520,13 +479,11 @@ def realtime_ivt_check_view(request):
     ecpm_today = float(t_agg['ecpm'] or 0)
     ecpm_base = float(h_agg['ecpm'] or 0)
     view_today = float(t_agg['viewability'] or 0)
-    unk_ratio = float(t_agg['unknown_revenue']) / float(t_agg['revenue']) if float(t_agg['revenue'] or 0) > 0 else 0.0
 
     flags = {
         'ctr_spike': (ctr_base > 0 and (ctr_today / ctr_base) > 2.0) or ctr_today > 3.0,
         'ecpm_spike': (ecpm_base > 0 and (ecpm_today / ecpm_base) > 2.0),
         'low_viewability': view_today < 25.0,
-        'unknown_revenue_high': unk_ratio > 0.2,
     }
 
     # Dimension concentration checks (today)
@@ -538,8 +495,11 @@ def realtime_ivt_check_view(request):
         if child_code:
             dim_qs = dim_qs.filter(child_network_code=child_code)
         if not request.user.is_admin_user:
-            assigned_ids = AssignedPartnerChildAccount.objects.filter(partner=request.user).values_list('invitation_id', flat=True)
-            dim_qs = dim_qs.filter(invitation_id__in=list(assigned_ids))
+            # Publisher users see data based on their network_id
+            if hasattr(request.user, 'network_id') and request.user.network_id:
+                dim_qs = dim_qs.filter(parent_network_code=request.user.network_id)
+            else:
+                dim_qs = dim_qs.none()
         total_imp = dim_qs.aggregate(val=Coalesce(Sum('impressions'), 0))['val'] or 0
         if total_imp == 0:
             return 0.0
@@ -555,7 +515,7 @@ def realtime_ivt_check_view(request):
     for name, is_flag in flags.items():
         if is_flag:
             # Different weights
-            risk_score -= 25 if name in ['ctr_spike', 'unknown_revenue_high'] else 15
+            risk_score -= 25 if name in ['ctr_spike'] else 15
     risk_score = max(0, risk_score)
 
     return Response({
@@ -567,9 +527,6 @@ def realtime_ivt_check_view(request):
             'ecpm': ecpm_today,
             'ctr': ctr_today,
             'viewability': view_today,
-            'unknown_revenue': float(t_agg['unknown_revenue']),
-            'unknown_impressions': t_agg['unknown_impressions'],
-            'unknown_ratio': unk_ratio,
         },
         'baseline_7d_avg': h_agg,
         'flags': flags,
@@ -589,10 +546,11 @@ class ReportOverviewView(generics.ListAPIView):
         # Base queryset with role-based filtering
         queryset = MasterMetaData.objects.filter(dimension_type='overview')
         if not user.is_admin_user:
-            assigned_invitations = AssignedPartnerChildAccount.objects.filter(
-                partner=user
-            ).values_list('invitation_id', flat=True)
-            queryset = queryset.filter(invitation_id__in=assigned_invitations)
+            # Publisher users see data based on their network_id
+            if hasattr(user, 'network_id') and user.network_id:
+                queryset = queryset.filter(parent_network_code=user.network_id)
+            else:
+                queryset = queryset.none()
         
         # Apply filters
         date_from = request.query_params.get('date_from')
@@ -602,7 +560,7 @@ class ReportOverviewView(generics.ListAPIView):
         
         parent_network = request.query_params.get('parent_network')
         if parent_network:
-            queryset = queryset.filter(parent_network__network_code=parent_network)
+            queryset = queryset.filter(parent_network_code=parent_network)
         
         # Group by date and aggregate
         daily_data = queryset.values('date').annotate(
@@ -612,7 +570,7 @@ class ReportOverviewView(generics.ListAPIView):
             total_ad_requests=Sum('total_ad_requests'),
             avg_ecpm=Avg('ecpm'),
             avg_ctr=Avg('ctr'),
-            network_count=Count('parent_network', distinct=True),
+            network_count=Count('parent_network_code', distinct=True),
             child_count=Count('child_network_code', distinct=True)
         ).order_by('-date')
         
@@ -638,15 +596,14 @@ class ReportDetailedView(generics.ListAPIView):
         user = self.request.user
         
         # Base queryset with role-based filtering
-        queryset = MasterMetaData.objects.select_related(
-            'parent_network', 'invitation'
-        ).all()
+        queryset = MasterMetaData.objects.all()
         
         if not user.is_admin_user:
-            assigned_invitations = AssignedPartnerChildAccount.objects.filter(
-                partner=user
-            ).values_list('invitation_id', flat=True)
-            queryset = queryset.filter(invitation_id__in=assigned_invitations)
+            # Publisher users see data based on their network_id
+            if hasattr(user, 'network_id') and user.network_id:
+                queryset = queryset.filter(parent_network_code=user.network_id)
+            else:
+                queryset = queryset.none()
         
         # Apply filters
         dimension_type = self.request.query_params.get('dimension_type', 'overview')
@@ -659,7 +616,7 @@ class ReportDetailedView(generics.ListAPIView):
         
         parent_network = self.request.query_params.get('parent_network')
         if parent_network:
-            queryset = queryset.filter(parent_network__network_code=parent_network)
+            queryset = queryset.filter(parent_network_code=parent_network)
         
         child_network = self.request.query_params.get('child_network')
         if child_network:
@@ -692,15 +649,14 @@ class ReportExportView(generics.GenericAPIView):
         user = request.user
         
         # Get filtered queryset (reuse logic from ReportDetailedView)
-        queryset = MasterMetaData.objects.select_related(
-            'parent_network', 'invitation'
-        ).all()
+        queryset = MasterMetaData.objects.all()
         
         if not user.is_admin_user:
-            assigned_invitations = AssignedPartnerChildAccount.objects.filter(
-                partner=user
-            ).values_list('invitation_id', flat=True)
-            queryset = queryset.filter(invitation_id__in=assigned_invitations)
+            # Publisher users see data based on their network_id
+            if hasattr(user, 'network_id') and user.network_id:
+                queryset = queryset.filter(parent_network_code=user.network_id)
+            else:
+                queryset = queryset.none()
         
         # Apply same filters as detailed view
         dimension_type = request.query_params.get('dimension_type', 'overview')
@@ -730,18 +686,19 @@ class ReportExportView(generics.GenericAPIView):
         # Write data
         for record in queryset.order_by('-date', 'dimension_value'):
             partner_email = ''
-            if record.partner_id:
+            if record.parent_network_code:
                 try:
-                    partner = User.objects.get(id=record.partner_id)
+                    # Find publisher by network_id
+                    partner = User.objects.get(network_id=record.parent_network_code, role='publisher')
                     partner_email = partner.email
                 except User.DoesNotExist:
                     pass
             
             writer.writerow([
                 record.date,
-                record.parent_network.network_name,
+                record.parent_network_code or '',
                 record.child_network_code,
-                record.invitation.child_network_name or '',
+                record.parent_network_code or '',
                 record.dimension_type,
                 record.dimension_value or '',
                 partner_email,
@@ -770,7 +727,7 @@ class UnifiedReportsQueryView(APIView):
     - Partner-based access control
     - Dimension filtering
     - Date range filtering
-    - Comprehensive metrics including unknown revenue tracking
+    - Comprehensive metrics for managed inventory tracking
     """
     permission_classes = [IsAuthenticated]
     
@@ -813,25 +770,17 @@ class UnifiedReportsQueryView(APIView):
     
     def _build_base_queryset(self, user, data):
         """Build base queryset with role-based access control"""
-        queryset = MasterMetaData.objects.select_related(
-            'parent_network', 'invitation'
-        ).all()
+        # Simplified for managed inventory - no invitation or parent_network relationships
+        queryset = MasterMetaData.objects.all()
         
         # Role-based filtering
-        if user.role == 'parent':
-            # Parent users only see accounts from their parent network
-            from accounts.permissions import get_parent_network_for_user
-            parent_network = get_parent_network_for_user(user)
-            if parent_network:
-                queryset = queryset.filter(parent_network=parent_network)
+        if not user.is_admin_user:
+            # Publisher users see data based on their network_id
+            if hasattr(user, 'network_id') and user.network_id:
+                queryset = queryset.filter(parent_network_code=user.network_id)
             else:
-                queryset = queryset.none()  # No network assigned, show nothing
-        elif not user.is_admin_user:
-            # Partner users only see their assigned child networks
-            assigned_invitations = AssignedPartnerChildAccount.objects.filter(
-                partner=user
-            ).values_list('invitation_id', flat=True)
-            queryset = queryset.filter(invitation_id__in=assigned_invitations)
+                # If no network_id, return empty queryset
+                queryset = queryset.none()
         
         return queryset
     
@@ -849,11 +798,12 @@ class UnifiedReportsQueryView(APIView):
                 continue
             
             if filter_key == 'parent_network':
-                queryset = queryset.filter(parent_network__network_code__in=filter_values)
-            elif filter_key == 'partner':
-                queryset = queryset.filter(partner_id__in=filter_values)
+                queryset = queryset.filter(parent_network_code__in=filter_values)
+            elif filter_key == 'publisher':
+                # Filter by publisher network_id
+                queryset = queryset.filter(parent_network_code__in=filter_values)
             elif filter_key == 'child_network':
-                queryset = queryset.filter(child_network_code__in=filter_values)
+                queryset = queryset.filter(parent_network_code__in=filter_values)
             elif filter_key == 'dimension_type':
                 queryset = queryset.filter(dimension_type__in=filter_values)
         
@@ -878,7 +828,6 @@ class UnifiedReportsQueryView(APIView):
         results = []
         metrics_list = data['metrics'].split(',')
 
-        # No mapping needed - frontend and model both use unknown_* fields
 
         def serialize_record(record):
             result_data = {
@@ -886,11 +835,11 @@ class UnifiedReportsQueryView(APIView):
                 'date': record.date,
                 'dimension_type': record.dimension_type,
                 'dimension_value': record.dimension_value,
-                'parent_network_name': record.parent_network.network_name,
-                'parent_network_code': record.parent_network.network_code,
+                'parent_network_name': record.parent_network_code,
+                'parent_network_code': record.parent_network_code,
                 'child_network_code': record.child_network_code,
-                'child_network_name': record.invitation.child_network_name,
-                'partner_id': record.partner_id,
+                'child_network_name': record.parent_network_code,
+                'parent_network_code': record.parent_network_code,
             }
             
             # Add requested metrics
@@ -901,7 +850,7 @@ class UnifiedReportsQueryView(APIView):
                 
                 if hasattr(record, actual_metric):
                     value = getattr(record, actual_metric)
-                    if metric in ['revenue', 'unknown_revenue']:
+                    if metric in ['revenue']:
                         result_data[metric] = f"{value:.2f}"
                     else:
                         result_data[metric] = value
@@ -941,10 +890,6 @@ class UnifiedReportsQueryView(APIView):
             total_ad_requests=Sum('total_ad_requests'),
             total_eligible_ad_requests=Sum('eligible_ad_requests'),
             
-            # Unknown metrics
-            total_unknown_revenue=Sum('unknown_revenue'),
-            total_unknown_impressions=Sum('unknown_impressions'),
-            total_unknown_clicks=Sum('unknown_clicks'),
             
             # Average metrics
             avg_ecpm=Avg('ecpm'),
@@ -952,7 +897,7 @@ class UnifiedReportsQueryView(APIView):
             # Note: viewability will be calculated separately excluding zero-impression accounts
             
             # Counts
-            network_count=Count('parent_network', distinct=True),
+            network_count=Count('parent_network_code', distinct=True),
             child_count=Count('child_network_code', distinct=True)
         ).order_by('-date')
         
@@ -998,50 +943,16 @@ class UnifiedReportsQueryView(APIView):
                 else:
                     formatted_day['avg_viewable_impressions_rate'] = 0
             
-            # 🆕 UNKNOWN METRICS
-            if 'unknown_revenue' in metrics_list:
-                formatted_day['total_unknown_revenue'] = day_data.get('total_unknown_revenue', 0) or 0
             
-            if 'unknown_impressions' in metrics_list:
-                formatted_day['total_unknown_impressions'] = day_data.get('total_unknown_impressions', 0) or 0
-            
-            if 'unknown_clicks' in metrics_list:
-                formatted_day['total_unknown_clicks'] = day_data.get('total_unknown_clicks', 0) or 0
-            
-            if 'unknown_ecpm' in metrics_list:
-                # Calculate unknown eCPM: unknown_revenue / unknown_impressions * 1000
-                unknown_rev = day_data.get('total_unknown_revenue', 0) or 0
-                unknown_imps = day_data.get('total_unknown_impressions', 0) or 0
-                unknown_ecpm = (unknown_rev / unknown_imps * 1000) if unknown_imps > 0 else 0
-                formatted_day['avg_unknown_ecpm'] = round(unknown_ecpm, 4)
-            
-            if 'unknown_ctr' in metrics_list:
-                # Calculate unknown CTR: unknown_clicks / unknown_impressions * 100
-                unknown_clicks = day_data.get('total_unknown_clicks', 0) or 0
-                unknown_imps = day_data.get('total_unknown_impressions', 0) or 0
-                unknown_ctr = (unknown_clicks / unknown_imps * 100) if unknown_imps > 0 else 0
-                formatted_day['avg_unknown_ctr'] = round(unknown_ctr, 4)
-            
-            if 'unknown_fill_rate' in metrics_list:
-                # Calculate unknown fill rate: unknown_impressions / total_ad_requests * 100
-                unknown_imps = day_data.get('total_unknown_impressions', 0) or 0
-                total_requests = day_data.get('total_ad_requests', 0) or 0
-                unknown_fill_rate = (unknown_imps / total_requests * 100) if total_requests > 0 else 0
-                formatted_day['avg_unknown_fill_rate'] = round(unknown_fill_rate, 2)
-            
-            if 'match_rate' in metrics_list:
-                # Calculate match rate: matched_impressions / (matched + unknown) * 100
                 matched_imps = day_data.get('total_impressions', 0) or 0
-                unknown_imps = day_data.get('total_unknown_impressions', 0) or 0
-                total_all_imps = matched_imps + unknown_imps
+                total_all_imps = matched_imps
                 match_rate = (matched_imps / total_all_imps * 100) if total_all_imps > 0 else 100
                 formatted_day['avg_match_rate'] = round(match_rate, 2)
             
             if 'total_revenue_usd' in metrics_list:
-                # Total revenue including matched + unknown
+                # Total revenue
                 matched_rev = day_data.get('total_revenue', 0) or 0
-                unknown_rev = day_data.get('total_unknown_revenue', 0) or 0
-                total_rev = matched_rev + unknown_rev
+                total_rev = matched_rev
                 formatted_day['total_revenue_usd'] = f"{total_rev:.2f}"
             
             formatted_daily_data.append(formatted_day)
@@ -1084,56 +995,22 @@ class UnifiedReportsQueryView(APIView):
             total_fill_rate = (total_imps / total_requests * 100) if total_requests > 0 else 0
             total_row['avg_fill_rate'] = round(total_fill_rate, 2)
         
-        # Add unknown metrics to total row
-        if 'unknown_revenue' in metrics_list:
-            total_row['total_unknown_revenue'] = sum(d.get('total_unknown_revenue', 0) for d in formatted_daily_data)
         
-        if 'unknown_impressions' in metrics_list:
-            total_row['total_unknown_impressions'] = sum(d.get('total_unknown_impressions', 0) for d in formatted_daily_data)
-        
-        if 'unknown_clicks' in metrics_list:
-            total_row['total_unknown_clicks'] = sum(d.get('total_unknown_clicks', 0) for d in formatted_daily_data)
-        
-        if 'unknown_ecpm' in metrics_list:
-            unknown_rev = total_row.get('total_unknown_revenue', 0)
-            unknown_imps = total_row.get('total_unknown_impressions', 0)
-            total_unknown_ecpm = (unknown_rev / unknown_imps * 1000) if unknown_imps > 0 else 0
-            total_row['avg_unknown_ecpm'] = round(total_unknown_ecpm, 4)
-        
-        if 'unknown_ctr' in metrics_list:
-            unknown_clicks = total_row.get('total_unknown_clicks', 0)
-            unknown_imps = total_row.get('total_unknown_impressions', 0)
-            total_unknown_ctr = (unknown_clicks / unknown_imps * 100) if unknown_imps > 0 else 0
-            total_row['avg_unknown_ctr'] = round(total_unknown_ctr, 4)
-        
-        if 'unknown_fill_rate' in metrics_list:
-            unknown_imps = total_row.get('total_unknown_impressions', 0)
-            total_requests = total_row['total_ad_requests']
-            total_unknown_fill_rate = (unknown_imps / total_requests * 100) if total_requests > 0 else 0
-            total_row['avg_unknown_fill_rate'] = round(total_unknown_fill_rate, 2)
         
         if 'match_rate' in metrics_list:
             matched_imps = total_row['total_impressions']
-            unknown_imps = total_row.get('total_unknown_impressions', 0)
-            total_all_imps = matched_imps + unknown_imps
+            total_all_imps = matched_imps
             total_match_rate = (matched_imps / total_all_imps * 100) if total_all_imps > 0 else 100
             total_row['avg_match_rate'] = round(total_match_rate, 2)
         
         if 'total_revenue_usd' in metrics_list:
             matched_rev = total_row['total_revenue']
-            unknown_rev = total_row.get('total_unknown_revenue', 0)
-            total_rev = matched_rev + unknown_rev
+            total_rev = matched_rev
             total_row['total_revenue_usd'] = f"{total_rev:.2f}"
         
         # Note: Total row is now handled by frontend calculateTotals function
         # No need to add total row here - frontend will handle it like other tabs
         
-        # Add summary for unknown metrics if requested
-        if 'unknown_revenue' in metrics_list:
-            summary_stats['total_unknown_revenue'] = sum(d.get('total_unknown_revenue', 0) for d in formatted_daily_data)
-        
-        if 'unknown_impressions' in metrics_list:
-            summary_stats['total_unknown_impressions'] = sum(d.get('total_unknown_impressions', 0) for d in formatted_daily_data)
         
         if 'total_revenue_usd' in metrics_list:
             total_rev_sum = 0
@@ -1143,7 +1020,7 @@ class UnifiedReportsQueryView(APIView):
                     total_rev_sum += float(rev_val.replace(',', ''))
                 else:
                     total_rev_sum += float(rev_val or 0)
-            summary_stats['total_revenue_including_unknown'] = f"{total_rev_sum:.2f}"
+            summary_stats['total_revenue'] = f"{total_rev_sum:.2f}"
         
         return Response({
             'query_info': {
@@ -1172,8 +1049,7 @@ class UnifiedReportsQueryView(APIView):
         
         # Breakdown by network
         network_breakdown = queryset.values(
-            'parent_network__network_name',
-            'parent_network__network_code'
+            'parent_network_code'
         ).annotate(
             total_revenue=Sum('revenue'),
             total_impressions=Sum('impressions'),
@@ -1242,12 +1118,12 @@ class UnifiedReportsQueryView(APIView):
         for record in queryset:
             row = [
                 record.date,
-                record.parent_network.network_name,
+                record.parent_network_code or '',
                 record.child_network_code,
-                record.invitation.child_network_name or '',
+                record.parent_network_code or '',
                 record.dimension_type,
                 record.dimension_value or '',
-                record.partner_id or ''
+                record.parent_network_code or ''
             ]
             
             # Add metric values
@@ -1315,35 +1191,33 @@ def financial_summary_view(request):
     )
     
     if not user.is_admin_user:
-        assigned_invitations = AssignedPartnerChildAccount.objects.filter(
-            partner=user
-        ).values_list('invitation_id', flat=True)
-        base_queryset = base_queryset.filter(invitation_id__in=assigned_invitations)
+        # Publisher users see data based on their network_id
+        if hasattr(user, 'network_id') and user.network_id:
+            base_queryset = base_queryset.filter(parent_network_code=user.network_id)
+        else:
+            base_queryset = base_queryset.none()
     
     # Calculate gross revenue (sum of all revenue)
     gross_revenue = base_queryset.aggregate(
         total=Sum('revenue')
     )['total'] or 0
     
-    # Calculate parent share dynamically based on revenue share percentages
+    # Calculate parent share based on average revenue share percentage
     parent_share = 0
     
-    # Get revenue share data for each invitation
-    revenue_share_data = base_queryset.select_related('invitation').values(
-        'invitation__revenue_share_percentage',
-        'revenue'
-    )
+    # Get average revenue share percentage from publishers
+    from accounts.models import User
+    avg_revenue_share = User.objects.filter(
+        role='publisher'
+    ).aggregate(
+        avg=Sum('revenue_share_percentage')
+    )['avg'] or 0
     
-    for item in revenue_share_data:
-        revenue_share_percentage = item['invitation__revenue_share_percentage']
-        revenue = item['revenue']
-        
-        if revenue_share_percentage is not None:
-            # Revenue share percentage is what parent keeps
-            parent_share += (revenue * revenue_share_percentage / 100)
-        else:
-            # Default to 20% if no revenue share is set (MANAGE_INVENTORY)
-            parent_share += (revenue * 0.20)
+    if avg_revenue_share > 0:
+        parent_share = (gross_revenue * Decimal(str(avg_revenue_share)) / 100)
+    else:
+        # Default to 20% if no revenue share is set
+        parent_share = (gross_revenue * Decimal('0.20'))
     
     return Response({
         'gross_revenue': float(gross_revenue),
