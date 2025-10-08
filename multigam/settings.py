@@ -30,7 +30,7 @@ SECRET_KEY = config('SECRET_KEY', default='dev-secret-key-phase1')
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = config('DEBUG', default=True, cast=bool)
 
-ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1').split(',')
+ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1,publisher.hntgaming.me,*.hntgaming.me').split(',')
 
 # Application definition
 DJANGO_APPS = [
@@ -238,7 +238,7 @@ SIMPLE_JWT = {
 
 CORS_ALLOWED_ORIGINS = config(
     "CORS_ALLOWED_ORIGINS",
-    default="https://api.hntgaming.me,https://report.hntgaming.me,http://localhost:3010,http://127.0.0.1:3010"
+    default="https://api.hntgaming.me,https://report.hntgaming.me,https://publisher.hntgaming.me,http://localhost:3010,http://127.0.0.1:3010"
 ).split(",")
 
 # Set to True to allow all origins (for development only)
