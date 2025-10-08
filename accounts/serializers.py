@@ -149,8 +149,9 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
 
         user = User.objects.create_user(**validated_data)
 
-        if user.role == User.UserRole.PARTNER:
-            user.status = StatusChoices.PENDING_APPROVAL
+        # Publishers are active by default
+        if user.role == User.UserRole.PUBLISHER:
+            user.status = StatusChoices.ACTIVE
             user.save(update_fields=['status'])
 
             for item in permissions_data:

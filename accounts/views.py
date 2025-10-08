@@ -343,7 +343,8 @@ class CustomPasswordResetConfirmView(PasswordResetConfirmView):
         response = super().form_valid(form)
 
         user = form.user
-        if user.role == user.UserRole.PARTNER and user.status == StatusChoices.PENDING_APPROVAL:
+        # Publishers are activated automatically
+        if user.role == user.UserRole.PUBLISHER and user.status == StatusChoices.PENDING_APPROVAL:
             user.status = StatusChoices.ACTIVE
             user.save(update_fields=["status"])
 
@@ -518,8 +519,8 @@ class PasswordResetConfirmAPIView(APIView):
         user.set_password(password)
         user.save()
 
-        # Activate pending partners
-        if user.role == user.UserRole.PARTNER and user.status == StatusChoices.PENDING_APPROVAL:
+        # Activate pending publishers
+        if user.role == user.UserRole.PUBLISHER and user.status == StatusChoices.PENDING_APPROVAL:
             user.status = StatusChoices.ACTIVE
             user.save(update_fields=["status"])
 
