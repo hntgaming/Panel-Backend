@@ -269,8 +269,8 @@ CORS_ALLOW_METHODS = ["DELETE", "GET", "OPTIONS", "PATCH", "POST", "PUT"]
 CSRF_TRUSTED_ORIGINS = [
     'http://127.0.0.1:8000',
     'http://localhost:8000',
-    'http://13.201.117.27',
-    'https://13.201.117.27',
+    'http://13.203.115.13',
+    'https://13.203.115.13',
     'https://api.hntgaming.me',
 ]
 
