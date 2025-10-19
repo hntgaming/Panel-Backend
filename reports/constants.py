@@ -8,7 +8,7 @@ dimension_map = {
     "trafficSource": ["MOBILE_APP_NAME"],  # Traffic source dimension
     "deviceCategory": ["DEVICE_CATEGORY_NAME"],  # Device category dimension
     "country": ["COUNTRY_NAME"],  # Country dimension
-    "adunit": ["AD_UNIT_NAME"],  # Ad Unit Name dimension
+    "adunit": ["AD_UNIT_ID", "AD_UNIT_NAME"],  # Ad Unit with hierarchical path (ID shows full path)
     "inventoryFormat": ["INVENTORY_FORMAT"],  # Inventory Format dimension
     "browser": ["BROWSER_NAME"],  # Browser dimension
 }
@@ -29,23 +29,18 @@ core_metrics = [
     "AD_SERVER_WITHOUT_CPD_AVERAGE_ECPM"
 ]
 
-# Additional metrics that work with most dimensions
-extended_metrics = [
-    "TOTAL_PROGRAMMATIC_ELIGIBLE_AD_REQUESTS"
-]
-
 # Updated dimension metrics for Managed Inventory Publisher Dashboard
-# Using only metrics that work with CHILD_NETWORK_CODE filter in managed inventory
+# Using only core metrics - extended metrics conflict with TOTAL_AD_REQUESTS
 dimension_metrics = {
-    "overview": core_metrics + extended_metrics,  # Core metrics work with all dimensions
-    "site": core_metrics + extended_metrics,
-    "trafficSource": core_metrics + extended_metrics,
-    "deviceCategory": core_metrics + extended_metrics,
-    "country": core_metrics + extended_metrics,
-    "adunit": core_metrics + extended_metrics,
-    "inventoryFormat": core_metrics + extended_metrics,
-    "browser": core_metrics + extended_metrics,
+    "overview": core_metrics,  # Core metrics only
+    "site": core_metrics,
+    "trafficSource": core_metrics,
+    "deviceCategory": core_metrics,
+    "country": core_metrics,
+    "adunit": core_metrics,  # Will use AD_UNIT_ID for hierarchical path
+    "inventoryFormat": core_metrics,
+    "browser": core_metrics,
 }
 
 # Default metrics for backward compatibility
-metrics = core_metrics + extended_metrics
+metrics = core_metrics
