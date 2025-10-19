@@ -1,0 +1,4 @@
+ad_manager:
+  application_name: "Managed Inventory Publisher Dashboard"
+  network_code: "23310681755"
+  path_to_private_key_file: "key.json"

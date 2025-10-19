@@ -227,7 +227,7 @@ class GAMReportService:
             
             # Process each dimension
             dimension_results = {}
-            for dimension_key in GAM_DIMENSION_MAPPING.keys():
+            for dimension_key in dimension_map.keys():
                 try:
                     records = GAMReportService._fetch_child_dimension_reports(
                         client=client,
