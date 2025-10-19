@@ -11,24 +11,11 @@ from decouple import config
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# ADD THESE DEBUG LINES RIGHT HERE:
-print(f"🔍 DECOUPLE DEBUG: Current working directory: {os.getcwd()}")
-print(f"🔍 DECOUPLE DEBUG: BASE_DIR: {BASE_DIR}")
-
-# Also let's check if there are multiple .env files:
-print(f"🔍 DECOUPLE DEBUG: Looking for .env files...")
-for root, dirs, files in os.walk(BASE_DIR):
-    for file in files:
-        if file.startswith('.env'):
-            env_path = os.path.join(root, file)
-            print(f"🔍 Found .env file: {env_path}")
-
-
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = config('SECRET_KEY', default='dev-secret-key-phase1')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = config('DEBUG', default=True, cast=bool)
+DEBUG = config('DEBUG', default=False, cast=bool)
 
 ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='api2.hntgaming.me,api.hntgaming.me,localhost,127.0.0.1,publisher.hntgaming.me,*.hntgaming.me').split(',')
 
@@ -106,29 +93,20 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'multigam.wsgi.application'
 
-# Database
-# Use SQLite for local development, MySQL for production
-if config('DEBUG', default=True, cast=bool):
-    DATABASES = {
-        'default': {
-            'ENGINE': 'django.db.backends.sqlite3',
-            'NAME': BASE_DIR / 'managed_inventory.db',
-        }
+# Database - MySQL only (production-grade)
+DATABASES = {
+    'default': {
+        'ENGINE': 'django.db.backends.mysql',
+        'NAME': config('DB_NAME'),
+        'USER': config('DB_USER'),
+        'PASSWORD': config('DB_PASSWORD'),
+        'HOST': config('DB_HOST', default='localhost'),
+        'PORT': config('DB_PORT', default='3306'),
+        'OPTIONS': {
+            'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
+        },
     }
-else:
-    DATABASES = {
-        'default': {
-            'ENGINE': 'django.db.backends.mysql',
-            'NAME': config('DB_NAME'),
-            'USER': config('DB_USER'),
-            'PASSWORD': config('DB_PASSWORD'),
-            'HOST': config('DB_HOST', default='localhost'),
-            'PORT': config('DB_PORT', default='3306'),
-            'OPTIONS': {
-                'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
-            },
-        }
-    }
+}
 
 # Custom User Model
 AUTH_USER_MODEL = 'accounts.User'
@@ -324,10 +302,9 @@ def load_gam_credentials():
                 credentials = json.load(f)
                 return credentials
         except Exception as e:
-            print(f"Error loading GAM credentials: {e}")
+            # Silent fail - credentials will be empty dict
             return {}
     else:
-        print(f"GAM credentials file not found at: {json_file_path}")
         return {}
 
 # Load GAM credentials
@@ -368,36 +345,7 @@ GAM_API_VERSION = GAM_CONFIG['API_VERSION']
 GAM_SERVICE_ACCOUNT_EMAIL = GAM_SERVICE_ACCOUNT_INFO.get('client_email')
 
 # Print GAM configuration in development
-if DEBUG:
-    print("🔧 GAM Configuration Loaded:")
-    print(f"  - Parent Network: {GAM_PARENT_NETWORK_CODE}")
-    print(f"  - Child Network: {GAM_CHILD_NETWORK_CODE} (FORCED TO PARENT FOR TESTING)")
-    print(f"  - API Version: {GAM_API_VERSION}")
-    print(f"  - Application: {GAM_APPLICATION_NAME}")
-    print(f"  - Service Account: {GAM_SERVICE_ACCOUNT_INFO.get('client_email', 'Not loaded')}")
-    print(f"  - Credentials File: {config('GAM_PRIVATE_KEY_FILE', 'Not specified')}")
-    print(f"  - Private Key Loaded: {'Yes' if _gam_credentials.get('private_key') else 'No'}")
-    print(f"  - Scope: {GAM_CONFIG['SCOPES'][0]}")
+# GAM configuration loaded - validation happens in services
 
-# Validation check
-if not GAM_SERVICE_ACCOUNT_INFO.get('private_key'):
-    print("⚠️  WARNING: GAM private key not loaded properly!")
-    print("   Check your JSON credentials file and .env configuration")
-
-if not GAM_SERVICE_ACCOUNT_INFO.get('client_email'):
-    print("⚠️  WARNING: GAM service account email not found!")
-    print("   Check your GAM_CLIENT_EMAIL in .env file")
-
-print(f"🔍 CORS DEBUG:")
-print(f"  - DEBUG: {DEBUG}")
-print(f"  - CORS_ALLOWED_ORIGINS: {CORS_ALLOWED_ORIGINS}")
-print(f"  - CORS_ALLOW_ALL_ORIGINS: {globals().get('CORS_ALLOW_ALL_ORIGINS', 'Not set')}")
-print(f"  - ALLOWED_HOSTS: {ALLOWED_HOSTS}")
-print(f"  - CORS_ALLOW_CREDENTIALS: {CORS_ALLOW_CREDENTIALS}")
-
-# Additional verification
-if 'CORS_ALLOW_ALL_ORIGINS' in globals() and CORS_ALLOW_ALL_ORIGINS:
-    print("✅ CORS should accept ALL origins")
-else:
-    print("⚠️  CORS limited to specific origins only")
+# CORS configuration is complete - no debug output needed
 
