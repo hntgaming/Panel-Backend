@@ -156,23 +156,11 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
 
             for item in permissions_data:
                 permission = item['permission']
-                parent_network = None
-
-                if permission == 'manage_mcm_invites':
-                    from gam_accounts.models import GAMNetwork
-                    try:
-                        parent_network = GAMNetwork.objects.get(
-                            id=item['parent_gam_network'], network_type='parent'
-                        )
-                    except GAMNetwork.DoesNotExist:
-                        raise serializers.ValidationError({
-                            "permissions": [f"Invalid parent_gam_network ID: {item['parent_gam_network']}"]
-                        })
-
+                
+                # Create permission without parent_gam_network (simplified for managed inventory)
                 PublisherPermission.objects.create(
                     user=user,
-                    permission=permission,
-                    parent_gam_network=parent_network
+                    permission=permission
                 )
 
             send_welcome_email_with_reset_link(user)
