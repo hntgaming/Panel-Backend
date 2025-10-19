@@ -238,7 +238,7 @@ SIMPLE_JWT = {
 
 CORS_ALLOWED_ORIGINS = config(
     "CORS_ALLOWED_ORIGINS",
-    default="https://api2.hntgaming.me,https://api.hntgaming.me,https://publisher.hntgaming.me,https://report.hntgaming.me,http://localhost:3010,http://127.0.0.1:3010"
+    default="https://api2.hntgaming.me,https://publisher.hntgaming.me,http://localhost:3010,http://127.0.0.1:3010"
 ).split(",")
 
 # Set to True to allow all origins (for development only)
