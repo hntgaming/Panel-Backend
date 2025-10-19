@@ -86,9 +86,9 @@ class ReportDataListView(generics.ListAPIView):
 
         # Role-based filtering with optimized query
         if not user.is_admin_user:
-            # Publisher users see data based on their network_id
+            # Publisher users see data based on their network_id (as child_network_code)
             if hasattr(user, 'network_id') and user.network_id:
-                queryset = queryset.filter(parent_network_code=user.network_id)
+                queryset = queryset.filter(child_network_code=user.network_id)
             else:
                 # If no network_id, return empty queryset
                 queryset = queryset.none()
@@ -147,7 +147,7 @@ def report_analytics_view(request):
     if not user.is_admin_user:
         # Publisher users see data based on their network_id
         if hasattr(user, 'network_id') and user.network_id:
-            base_queryset = base_queryset.filter(parent_network_code=user.network_id)
+            base_queryset = base_queryset.filter(child_network_code=user.network_id)
         else:
             base_queryset = base_queryset.none()
     
@@ -318,7 +318,7 @@ def report_dashboard_view(request):
     if not user.is_admin_user:
         # Publisher users see data based on their network_id
         if hasattr(user, 'network_id') and user.network_id:
-            base_queryset = base_queryset.filter(parent_network_code=user.network_id)
+            base_queryset = base_queryset.filter(child_network_code=user.network_id)
         else:
             base_queryset = base_queryset.none()
     
@@ -436,9 +436,9 @@ def realtime_ivt_check_view(request):
     # Base queryset with role-based filtering
     base = MasterMetaData.objects.filter(dimension_type='overview')
     if not request.user.is_admin_user:
-        # Publisher users see data based on their network_id
+        # Publisher users see data based on their network_id (as child_network_code)
         if hasattr(request.user, 'network_id') and request.user.network_id:
-            base = base.filter(parent_network_code=request.user.network_id)
+            base = base.filter(child_network_code=request.user.network_id)
         else:
             base = base.none()
     if child_code:
@@ -495,9 +495,9 @@ def realtime_ivt_check_view(request):
         if child_code:
             dim_qs = dim_qs.filter(child_network_code=child_code)
         if not request.user.is_admin_user:
-            # Publisher users see data based on their network_id
+            # Publisher users see data based on their network_id (as child_network_code) (as child_network_code)
             if hasattr(request.user, 'network_id') and request.user.network_id:
-                dim_qs = dim_qs.filter(parent_network_code=request.user.network_id)
+                dim_qs = dim_qs.filter(child_network_code=request.user.network_id)
             else:
                 dim_qs = dim_qs.none()
         total_imp = dim_qs.aggregate(val=Coalesce(Sum('impressions'), 0))['val'] or 0
@@ -546,9 +546,9 @@ class ReportOverviewView(generics.ListAPIView):
         # Base queryset with role-based filtering
         queryset = MasterMetaData.objects.filter(dimension_type='overview')
         if not user.is_admin_user:
-            # Publisher users see data based on their network_id
+            # Publisher users see data based on their network_id (as child_network_code)
             if hasattr(user, 'network_id') and user.network_id:
-                queryset = queryset.filter(parent_network_code=user.network_id)
+                queryset = queryset.filter(child_network_code=user.network_id)
             else:
                 queryset = queryset.none()
         
@@ -599,9 +599,9 @@ class ReportDetailedView(generics.ListAPIView):
         queryset = MasterMetaData.objects.all()
         
         if not user.is_admin_user:
-            # Publisher users see data based on their network_id
+            # Publisher users see data based on their network_id (as child_network_code)
             if hasattr(user, 'network_id') and user.network_id:
-                queryset = queryset.filter(parent_network_code=user.network_id)
+                queryset = queryset.filter(child_network_code=user.network_id)
             else:
                 queryset = queryset.none()
         
@@ -652,9 +652,9 @@ class ReportExportView(generics.GenericAPIView):
         queryset = MasterMetaData.objects.all()
         
         if not user.is_admin_user:
-            # Publisher users see data based on their network_id
+            # Publisher users see data based on their network_id (as child_network_code)
             if hasattr(user, 'network_id') and user.network_id:
-                queryset = queryset.filter(parent_network_code=user.network_id)
+                queryset = queryset.filter(child_network_code=user.network_id)
             else:
                 queryset = queryset.none()
         
@@ -686,10 +686,10 @@ class ReportExportView(generics.GenericAPIView):
         # Write data
         for record in queryset.order_by('-date', 'dimension_value'):
             partner_email = ''
-            if record.parent_network_code:
+            if record.child_network_code:
                 try:
-                    # Find publisher by network_id
-                    partner = User.objects.get(network_id=record.parent_network_code, role='publisher')
+                    # Find publisher by network_id (child_network_code is the publisher's network)
+                    partner = User.objects.get(network_id=record.child_network_code, role='publisher')
                     partner_email = partner.email
                 except User.DoesNotExist:
                     pass
@@ -775,9 +775,9 @@ class UnifiedReportsQueryView(APIView):
         
         # Role-based filtering
         if not user.is_admin_user:
-            # Publisher users see data based on their network_id
+            # Publisher users see data based on their network_id (as child_network_code)
             if hasattr(user, 'network_id') and user.network_id:
-                queryset = queryset.filter(parent_network_code=user.network_id)
+                queryset = queryset.filter(child_network_code=user.network_id)
             else:
                 # If no network_id, return empty queryset
                 queryset = queryset.none()
@@ -1193,7 +1193,7 @@ def financial_summary_view(request):
     if not user.is_admin_user:
         # Publisher users see data based on their network_id
         if hasattr(user, 'network_id') and user.network_id:
-            base_queryset = base_queryset.filter(parent_network_code=user.network_id)
+            base_queryset = base_queryset.filter(child_network_code=user.network_id)
         else:
             base_queryset = base_queryset.none()
     
