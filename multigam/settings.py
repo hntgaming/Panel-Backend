@@ -80,7 +80,7 @@ EMAIL_HOST_PASSWORD = 'oziu vcug aszd twno'  # This must be an App Password
 DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
 
 
-FRONTEND_BASE_URL = "https://report.hntgaming.me"
+FRONTEND_BASE_URL = "https://publisher.hntgaming.me"
 
 FRONTEND_URL = FRONTEND_BASE_URL
 
