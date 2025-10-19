@@ -231,6 +231,7 @@ class GAMReportService:
             class MockInvitation:
                 def __init__(self, network_code):
                     self.child_network_code = network_code
+                    self.delegation_type = 'MANAGE_INVENTORY'  # Publishers use parent network credentials
             
             mock_invitation = MockInvitation(child_network_code)
             
