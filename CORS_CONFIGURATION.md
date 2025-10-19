@@ -1,7 +1,7 @@
-# CORS Configuration for publisher.hntgaming.me
+# CORS Configuration for api2.hntgaming.me
 
 ## Summary
-Backend CORS has been configured to accept requests from the AWS Amplify deployed frontend at `publisher.hntgaming.me`.
+Backend CORS has been configured to accept requests only from the AWS Amplify deployed frontend at `publisher.hntgaming.me` and the API domain `api2.hntgaming.me`.
 
 ## Changes Made
 
@@ -12,7 +12,7 @@ Backend CORS has been configured to accept requests from the AWS Amplify deploye
 ```python
 CORS_ALLOWED_ORIGINS = config(
     "CORS_ALLOWED_ORIGINS",
-    default="https://api.hntgaming.me,https://report.hntgaming.me,https://publisher.hntgaming.me,http://localhost:3010,http://127.0.0.1:3010"
+    default="https://api2.hntgaming.me,https://publisher.hntgaming.me,http://localhost:3010,http://127.0.0.1:3010"
 ).split(",")
 ```
 
@@ -20,17 +20,15 @@ CORS_ALLOWED_ORIGINS = config(
 ```python
 ALLOWED_HOSTS = config(
     'ALLOWED_HOSTS', 
-    default='localhost,127.0.0.1,publisher.hntgaming.me,*.hntgaming.me'
+    default='api2.hntgaming.me,api.hntgaming.me,localhost,127.0.0.1,publisher.hntgaming.me,*.hntgaming.me'
 ).split(',')
 ```
 
 ## Configured Domains
 
 ### Production Domains
+- ✅ `https://api2.hntgaming.me` - Primary API backend (with SSL)
 - ✅ `https://publisher.hntgaming.me` - AWS Amplify frontend
-- ✅ `https://api.hntgaming.me` - Production API
-- ✅ `https://report.hntgaming.me` - Legacy report domain
-- ✅ `*.hntgaming.me` - Wildcard for all subdomains
 
 ### Development Domains
 - ✅ `http://localhost:3010` - Local frontend development
