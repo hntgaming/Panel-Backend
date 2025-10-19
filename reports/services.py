@@ -178,6 +178,93 @@ class GAMReportService:
             }
 
     @staticmethod
+    def _process_publisher_network(publisher, date_from, date_to):
+        """
+        Process a single publisher network using the parent network YAML file
+        Works with Publisher User model instead of MCM Invitation
+        """
+        child_network_code = publisher.network_id
+        
+        try:
+            # Use parent network YAML file
+            from django.conf import settings
+            yaml_network_code = settings.GAM_PARENT_NETWORK_CODE
+            
+            # Check if YAML file exists
+            yaml_filepath = os.path.join(settings.BASE_DIR, 'yaml_files', f"{yaml_network_code}.yaml")
+            if not os.path.exists(yaml_filepath):
+                logger.warning(f"⚠️ YAML file not found: {yaml_filepath}")
+                raise FileNotFoundError(f"YAML file not found: {yaml_filepath}")
+            
+            logger.info(f"✅ Using parent YAML file: {yaml_filepath} for publisher {child_network_code}")
+            
+            try:
+                # Get GAM client for child network
+                client = GAMReportService._get_child_network_client(child_network_code)
+                logger.info(f"🔐 Authentication successful for {child_network_code}")
+                
+            except Exception as client_error:
+                error_message = str(client_error)
+                logger.warning(f"❌ Failed to authenticate with GAM for {child_network_code}: {error_message}")
+                
+                # Check if it's an authentication error
+                if any(keyword in error_message for keyword in [
+                    'AuthenticationError.NO_NETWORKS_TO_ACCESS',
+                    'NO_NETWORKS_TO_ACCESS',
+                    'AuthenticationError',
+                    'authentication',
+                    'unauthorized'
+                ]):
+                    logger.warning(f"🚫 Authentication error for {child_network_code} - skipping")
+                    return {
+                        'records_created': 0,
+                        'records_updated': 0,
+                        'dimensions_processed': [],
+                        'status': 'skipped',
+                        'message': 'Authentication error - account skipped'
+                    }
+                raise
+            
+            # Process each dimension
+            dimension_results = {}
+            for dimension_key in GAM_DIMENSION_MAPPING.keys():
+                try:
+                    records = GAMReportService._fetch_child_dimension_reports(
+                        client=client,
+                        invitation={'child_network_code': child_network_code},  # Mock invitation object
+                        dimension_key=dimension_key,
+                        date_from=date_from,
+                        date_to=date_to
+                    )
+                    dimension_results[dimension_key] = {
+                        'success': True,
+                        'records': records
+                    }
+                    logger.info(f"✅ {dimension_key}: {records} records")
+                except Exception as dim_error:
+                    logger.error(f"❌ Error processing {dimension_key}: {str(dim_error)}")
+                    dimension_results[dimension_key] = {
+                        'success': False,
+                        'error': str(dim_error)
+                    }
+            
+            total_records = sum(
+                r['records'] for r in dimension_results.values()
+                if r.get('success') and isinstance(r.get('records'), int)
+            )
+            
+            return {
+                'records_created': total_records,
+                'records_updated': 0,
+                'dimensions_processed': list(dimension_results.keys()),
+                'dimension_results': dimension_results
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Error processing publisher {child_network_code}: {str(e)}")
+            raise
+
+    @staticmethod
     def _process_child_network(invitation, date_from, date_to):
         """
         Process a single child network using its own YAML file

@@ -146,15 +146,16 @@ class Command(BaseCommand):
 
     def _process_parallel(self, date_from, date_to, max_workers, batch_size):
         """Process all accounts in parallel"""
-        # For managed inventory, we'll use a simplified approach
-        # Get all child networks that have data in MasterMetaData
-        from reports.models import MasterMetaData
-        eligible_networks = MasterMetaData.objects.values_list(
-            'child_network_code', flat=True
-        ).distinct()
+        # Get all active publisher users with network IDs
+        from accounts.models import User
+        eligible_publishers = User.objects.filter(
+            role='publisher',
+            is_active=True,
+            network_id__isnull=False
+        ).exclude(network_id='')
         
-        total_accounts = eligible_invitations.count()
-        self.stdout.write(f'📊 Found {total_accounts} eligible accounts')
+        total_accounts = eligible_publishers.count()
+        self.stdout.write(f'📊 Found {total_accounts} eligible publisher accounts')
         
         if total_accounts == 0:
             return {
@@ -166,9 +167,9 @@ class Command(BaseCommand):
                 'total_records_updated': 0
             }
         
-        # Split invitations into batches
-        invitation_list = list(eligible_invitations)
-        batches = [invitation_list[i:i + batch_size] for i in range(0, len(invitation_list), batch_size)]
+        # Split publishers into batches
+        publisher_list = list(eligible_publishers)
+        batches = [publisher_list[i:i + batch_size] for i in range(0, len(publisher_list), batch_size)]
         
         self.stdout.write(f'📦 Processing {len(batches)} batches of up to {batch_size} accounts each')
         
@@ -206,9 +207,9 @@ class Command(BaseCommand):
                         self.style.ERROR(f'❌ Batch processing failed: {str(e)}')
                     )
                     # Add failed results for this batch
-                    for invitation in batch:
+                    for publisher in batch:
                         results.append({
-                            'account': invitation.child_network_code,
+                            'account': publisher.network_id,
                             'success': False,
                             'error': str(e),
                             'records_created': 0
@@ -249,42 +250,42 @@ class Command(BaseCommand):
         }
 
     def _process_batch_with_quota(self, batch, date_from, date_to):
-        """Process a batch of accounts with API quota compliance"""
+        """Process a batch of publisher accounts with API quota compliance"""
         batch_results = []
         
-        for i, invitation in enumerate(batch):
+        for i, publisher in enumerate(batch):
             try:
                 # Add delay between requests to respect API quota
                 if i > 0:  # Don't delay the first request
                     time.sleep(REQUEST_DELAY)
                 
-                self.stdout.write(f'🔄 Processing {invitation.child_network_code}...')
+                self.stdout.write(f'🔄 Processing {publisher.network_id} ({publisher.email})...')
                 
                 # Process single account with quota retry logic
                 result = self._process_account_with_quota_retry(
-                    invitation, date_from, date_to
+                    publisher, date_from, date_to
                 )
                 
                 batch_results.append({
-                    'account': invitation.child_network_code,
+                    'account': publisher.network_id,
                     'success': True,
                     'records_created': result.get('records_created', 0),
                     'records_updated': result.get('records_updated', 0)
                 })
                 
                 self.stdout.write(
-                    f'✅ {invitation.child_network_code}: {result.get("records_created", 0)} records created'
+                    f'✅ {publisher.network_id}: {result.get("records_created", 0)} records created'
                 )
                 
             except Exception as e:
                 error_message = str(e)
                 self.stdout.write(
-                    self.style.ERROR(f'❌ {invitation.child_network_code}: {error_message}')
+                    self.style.ERROR(f'❌ {publisher.network_id}: {error_message}')
                 )
                 
                 
                 batch_results.append({
-                    'account': invitation.child_network_code,
+                    'account': publisher.network_id,
                     'success': False,
                     'error': error_message,
                     'records_created': 0,
@@ -292,12 +293,12 @@ class Command(BaseCommand):
         
         return batch_results
     
-    def _process_account_with_quota_retry(self, invitation, date_from, date_to):
+    def _process_account_with_quota_retry(self, publisher, date_from, date_to):
         """Process single account with quota error retry logic"""
         for attempt in range(MAX_QUOTA_RETRIES):
             try:
-                return GAMReportService._process_child_network(
-                    invitation, date_from, date_to
+                return GAMReportService._process_publisher_network(
+                    publisher, date_from, date_to
                 )
             except Exception as e:
                 error_message = str(e)
@@ -310,7 +311,7 @@ class Command(BaseCommand):
                         wait_time = QUOTA_RETRY_DELAY * (2 ** attempt)  # Exponential backoff
                         self.stdout.write(
                             self.style.WARNING(
-                                f'⚠️ Quota exceeded for {invitation.child_network_code}, retrying in {wait_time}s (attempt {attempt + 1}/{MAX_QUOTA_RETRIES})'
+                                f'⚠️ Quota exceeded for {publisher.network_id}, retrying in {wait_time}s (attempt {attempt + 1}/{MAX_QUOTA_RETRIES})'
                             )
                         )
                         time.sleep(wait_time)
@@ -318,7 +319,7 @@ class Command(BaseCommand):
                     else:
                         self.stdout.write(
                             self.style.ERROR(
-                                f'❌ Quota exceeded for {invitation.child_network_code} after {MAX_QUOTA_RETRIES} attempts'
+                                f'❌ Quota exceeded for {publisher.network_id} after {MAX_QUOTA_RETRIES} attempts'
                             )
                         )
                 
