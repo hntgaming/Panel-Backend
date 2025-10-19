@@ -727,3 +727,86 @@ def delete_publisher_user(request, user_id):
         return Response({
             'error': str(e)
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+# ============================================================================
+# PAYMENT DETAILS VIEWS
+# ============================================================================
+
+from .models import PaymentDetail
+from .serializers import PaymentDetailSerializer, PaymentDetailListSerializer
+
+
+class PaymentDetailView(APIView):
+    """
+    GET/POST/PUT payment details for current user (publishers only)
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        """Get current user's payment details"""
+        try:
+            payment_detail = PaymentDetail.objects.get(user=request.user)
+            serializer = PaymentDetailSerializer(payment_detail)
+            return Response(serializer.data)
+        except PaymentDetail.DoesNotExist:
+            return Response({
+                'detail': 'Payment details not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+    
+    def post(self, request):
+        """Create payment details for current user"""
+        # Check if payment details already exist
+        if PaymentDetail.objects.filter(user=request.user).exists():
+            return Response({
+                'error': 'Payment details already exist. Use PUT to update.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        serializer = PaymentDetailSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save(user=request.user)
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    def put(self, request):
+        """Update payment details for current user"""
+        try:
+            payment_detail = PaymentDetail.objects.get(user=request.user)
+        except PaymentDetail.DoesNotExist:
+            return Response({
+                'error': 'Payment details not found. Use POST to create.'
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        serializer = PaymentDetailSerializer(payment_detail, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class PaymentDetailListView(generics.ListAPIView):
+    """
+    GET all payment details (admin only)
+    """
+    permission_classes = [IsAuthenticated]
+    serializer_class = PaymentDetailListSerializer
+    
+    def get_queryset(self):
+        # Only admin can view all payment details
+        if not self.request.user.is_admin_user:
+            return PaymentDetail.objects.none()
+        return PaymentDetail.objects.select_related('user').all()
+
+
+class PaymentDetailDetailView(generics.RetrieveAPIView):
+    """
+    GET specific payment detail by ID (admin only)
+    """
+    permission_classes = [IsAuthenticated]
+    serializer_class = PaymentDetailSerializer
+    
+    def get_queryset(self):
+        # Only admin can view payment details
+        if not self.request.user.is_admin_user:
+            return PaymentDetail.objects.none()
+        return PaymentDetail.objects.select_related('user').all()

@@ -354,3 +354,75 @@ class PublisherListSerializer(serializers.ModelSerializer):
         model = User
         fields = ['id', 'company_name', 'email', 'status', 'date_joined', 'revenue_share_percentage', 'site_url', 'network_id']
 
+
+class PaymentDetailSerializer(serializers.ModelSerializer):
+    """Serializer for payment details"""
+    user_email = serializers.EmailField(source='user.email', read_only=True)
+    user_name = serializers.CharField(source='user.get_full_name', read_only=True)
+    publisher_name = serializers.CharField(source='user.company_name', read_only=True)
+    payment_method_display = serializers.CharField(source='get_payment_method_display', read_only=True)
+    
+    class Meta:
+        from .models import PaymentDetail
+        model = PaymentDetail
+        fields = [
+            'id',
+            'user',
+            'user_email',
+            'user_name',
+            'publisher_name',
+            'payment_method',
+            'payment_method_display',
+            'crypto_wallet_address',
+            'beneficiary_name',
+            'bank_name',
+            'iban',
+            'swift_code',
+            'country',
+            'notes',
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = ['id', 'user', 'user_email', 'user_name', 'publisher_name', 'payment_method_display', 'created_at', 'updated_at']
+    
+    def validate(self, data):
+        """Validate payment details based on payment method"""
+        payment_method = data.get('payment_method')
+        
+        if payment_method == 'crypto':
+            if not data.get('crypto_wallet_address'):
+                raise serializers.ValidationError({
+                    'crypto_wallet_address': 'Wallet address is required for crypto payments'
+                })
+        elif payment_method == 'wire':
+            required_fields = ['beneficiary_name', 'bank_name', 'iban', 'swift_code', 'country']
+            missing = [field for field in required_fields if not data.get(field)]
+            if missing:
+                raise serializers.ValidationError({
+                    field: f'{field.replace("_", " ").title()} is required for wire transfer'
+                    for field in missing
+                })
+        
+        return data
+
+
+class PaymentDetailListSerializer(serializers.ModelSerializer):
+    """Simplified serializer for listing payment details (admin view)"""
+    user_email = serializers.EmailField(source='user.email', read_only=True)
+    publisher_name = serializers.CharField(source='user.company_name', read_only=True)
+    payment_method_display = serializers.CharField(source='get_payment_method_display', read_only=True)
+    
+    class Meta:
+        from .models import PaymentDetail
+        model = PaymentDetail
+        fields = [
+            'id',
+            'user',
+            'user_email',
+            'publisher_name',
+            'payment_method',
+            'payment_method_display',
+            'created_at',
+            'updated_at',
+        ]
+

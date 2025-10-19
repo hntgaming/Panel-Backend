@@ -47,4 +47,9 @@ urlpatterns = [
     path('users/<int:user_id>/permissions/', views.update_publisher_permissions, name='update_publisher_permissions'),
     path('publishers/<int:user_id>/delete/', views.delete_publisher_user, name='delete_publisher_user'),
 
+    # Payment details endpoints
+    path('payment-details/', views.PaymentDetailView.as_view(), name='payment_details'),  # GET/POST/PUT for current user
+    path('payment-details/all/', views.PaymentDetailListView.as_view(), name='payment_details_list'),  # GET all (admin)
+    path('payment-details/<int:pk>/', views.PaymentDetailDetailView.as_view(), name='payment_detail_detail'),  # GET specific (admin)
+
 ]

@@ -368,3 +368,99 @@ class PermissionAuditLog(TimeStampedModel):
     
     def __str__(self):
         return f"{self.action} for {self.target_user.email} by {self.performed_by.email if self.performed_by else 'System'}"
+
+
+class PaymentDetail(TimeStampedModel):
+    """
+    Payment details for publishers
+    Supports both cryptocurrency and wire transfer payments
+    """
+    class PaymentMethod(models.TextChoices):
+        CRYPTO = 'crypto', 'Cryptocurrency (TRC20)'
+        WIRE = 'wire', 'Wire Transfer'
+    
+    user = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name='payment_details',
+        limit_choices_to={'role': 'publisher'},
+        help_text="Publisher user"
+    )
+    
+    payment_method = models.CharField(
+        max_length=20,
+        choices=PaymentMethod.choices,
+        help_text="Preferred payment method"
+    )
+    
+    # Cryptocurrency fields (TRC20)
+    crypto_wallet_address = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text="TRC20 wallet address for crypto payments"
+    )
+    
+    # Wire transfer fields
+    beneficiary_name = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text="Beneficiary name for wire transfer"
+    )
+    bank_name = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text="Bank name"
+    )
+    iban = models.CharField(
+        max_length=50,
+        blank=True,
+        help_text="IBAN (International Bank Account Number)"
+    )
+    swift_code = models.CharField(
+        max_length=20,
+        blank=True,
+        help_text="SWIFT/BIC code"
+    )
+    country = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="Bank country"
+    )
+    
+    # Additional fields
+    notes = models.TextField(
+        blank=True,
+        help_text="Additional payment notes or instructions"
+    )
+    
+    class Meta:
+        db_table = 'accounts_payment_details'
+        verbose_name = 'Payment Detail'
+        verbose_name_plural = 'Payment Details'
+    
+    def __str__(self):
+        return f"{self.user.email} - {self.get_payment_method_display()}"
+    
+    def clean(self):
+        """Validate payment details based on payment method"""
+        from django.core.exceptions import ValidationError
+        
+        if self.payment_method == self.PaymentMethod.CRYPTO:
+            if not self.crypto_wallet_address:
+                raise ValidationError({
+                    'crypto_wallet_address': 'Wallet address is required for crypto payments'
+                })
+        elif self.payment_method == self.PaymentMethod.WIRE:
+            required_fields = {
+                'beneficiary_name': self.beneficiary_name,
+                'bank_name': self.bank_name,
+                'iban': self.iban,
+                'swift_code': self.swift_code,
+                'country': self.country,
+            }
+            missing_fields = [name for name, value in required_fields.items() if not value]
+            if missing_fields:
+                raise ValidationError({
+                    field: f'{field.replace("_", " ").title()} is required for wire transfer'
+                    for field in missing_fields
+                })
