@@ -653,8 +653,8 @@ class GAMReportService:
                 
                 # Create record data
                 record_data = {
-                    'parent_network': invitation.parent_network,
-                    'invitation': invitation,
+                    'parent_network_code': invitation.parent_network.network_code,
+                    'publisher_id': None,  # Will be set if needed
                     'child_network_code': invitation.child_network_code,
                     'dimension_type': dimension_key,
                     'dimension_value': dimension_value,
@@ -680,19 +680,19 @@ class GAMReportService:
     @staticmethod
     def _store_report_data(data):
         """
-        REPLICATED: Store report data in database with duplicate prevention for overview
+        Store report data in database with duplicate prevention
+        Updated for publisher-based model without invitation/parent_network fields
         """
         try:
-            # For overview records, ensure we don't create duplicates by using invitation as part of the unique constraint
+            # For overview records, use child_network_code + date as unique constraint
             if data['dimension_type'] == 'overview':
-                # Use invitation + date as unique constraint for overview to prevent duplicates
                 record, created = MasterMetaData.objects.update_or_create(
-                    invitation=data['invitation'],
+                    parent_network_code=data['parent_network_code'],
+                    child_network_code=data['child_network_code'],
                     dimension_type=data['dimension_type'],
                     date=data['date'],
                     defaults={
-                        'parent_network': data['parent_network'],
-                        'child_network_code': data['child_network_code'],
+                        'publisher_id': data.get('publisher_id'),
                         'dimension_value': data['dimension_value'],
                         'currency': data['currency'],
                         'impressions': data['impressions'],
@@ -700,27 +700,29 @@ class GAMReportService:
                         'ecpm': data['ecpm'],
                         'clicks': data['clicks'],
                         'ctr': data['ctr'],
-                        'total_ad_requests': data['total_ad_requests'],
+                        'total_ad_requests': data.get('total_ad_requests', 0),
+                        'eligible_ad_requests': data.get('eligible_ad_requests', 0),
                         'viewable_impressions_rate': data['viewable_impressions_rate'],
                     }
                 )
             else:
-                # For other dimensions, use the original logic
+                # For other dimensions, use standard fields
                 record, created = MasterMetaData.objects.update_or_create(
+                    parent_network_code=data['parent_network_code'],
                     child_network_code=data['child_network_code'],
                     dimension_type=data['dimension_type'],
                     dimension_value=data['dimension_value'],
                     date=data['date'],
                     defaults={
-                        'parent_network': data['parent_network'],
-                        'invitation': data['invitation'],
+                        'publisher_id': data.get('publisher_id'),
                         'currency': data['currency'],
                         'impressions': data['impressions'],
                         'revenue': data['revenue'],
                         'ecpm': data['ecpm'],
                         'clicks': data['clicks'],
                         'ctr': data['ctr'],
-                        'total_ad_requests': data['total_ad_requests'],
+                        'total_ad_requests': data.get('total_ad_requests', 0),
+                        'eligible_ad_requests': data.get('eligible_ad_requests', 0),
                         'viewable_impressions_rate': data['viewable_impressions_rate'],
                     }
                 )
