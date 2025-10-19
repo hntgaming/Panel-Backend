@@ -34,22 +34,17 @@ extended_metrics = [
     "TOTAL_PROGRAMMATIC_ELIGIBLE_AD_REQUESTS"
 ]
 
-# Metrics that only work with overview and some specific dimensions
-limited_metrics = [
-    "TOTAL_AD_REQUESTS"
-]
-
 # Updated dimension metrics for Managed Inventory Publisher Dashboard
-# TOTAL_AD_REQUESTS only works with overview dimension
+# Using only metrics that work with CHILD_NETWORK_CODE filter in managed inventory
 dimension_metrics = {
-    "overview": core_metrics + extended_metrics + limited_metrics,  # Overview supports all metrics
-    "site": core_metrics + extended_metrics,  # TOTAL_AD_REQUESTS not compatible
-    "trafficSource": core_metrics + extended_metrics,  # TOTAL_AD_REQUESTS not compatible
-    "deviceCategory": core_metrics + extended_metrics,  # TOTAL_AD_REQUESTS not compatible
-    "country": core_metrics + extended_metrics,  # TOTAL_AD_REQUESTS not compatible
-    "adunit": core_metrics + extended_metrics,  # TOTAL_AD_REQUESTS not compatible
-    "inventoryFormat": core_metrics + extended_metrics,  # TOTAL_AD_REQUESTS not compatible
-    "browser": core_metrics + extended_metrics,  # TOTAL_AD_REQUESTS not compatible
+    "overview": core_metrics + extended_metrics,  # Core metrics work with all dimensions
+    "site": core_metrics + extended_metrics,
+    "trafficSource": core_metrics + extended_metrics,
+    "deviceCategory": core_metrics + extended_metrics,
+    "country": core_metrics + extended_metrics,
+    "adunit": core_metrics + extended_metrics,
+    "inventoryFormat": core_metrics + extended_metrics,
+    "browser": core_metrics + extended_metrics,
 }
 
 # Default metrics for backward compatibility
