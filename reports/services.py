@@ -228,13 +228,18 @@ class GAMReportService:
             
             # Process each dimension
             dimension_results = {}
-            # Create a simple object to mimic invitation
+            # Create a simple object to mimic invitation with all required attributes
             class MockInvitation:
-                def __init__(self, network_code):
+                def __init__(self, network_code, parent_code):
                     self.child_network_code = network_code
                     self.delegation_type = 'MANAGE_INVENTORY'  # Publishers use parent network credentials
+                    # Create a mock parent_network object
+                    self.parent_network = type('obj', (object,), {
+                        'network_code': parent_code,
+                        'network_name': 'Parent Network'
+                    })()
             
-            mock_invitation = MockInvitation(child_network_code)
+            mock_invitation = MockInvitation(child_network_code, yaml_network_code)
             
             for dimension_key in dimension_map.keys():
                 try:
