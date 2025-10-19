@@ -40,16 +40,16 @@ limited_metrics = [
 ]
 
 # Updated dimension metrics for Managed Inventory Publisher Dashboard
-# Removed unknown metrics
+# TOTAL_AD_REQUESTS only works with overview dimension
 dimension_metrics = {
-    "overview": core_metrics + extended_metrics,  # Use only compatible metrics with DATE dimension
+    "overview": core_metrics + extended_metrics + limited_metrics,  # Overview supports all metrics
     "site": core_metrics + extended_metrics,  # TOTAL_AD_REQUESTS not compatible
     "trafficSource": core_metrics + extended_metrics,  # TOTAL_AD_REQUESTS not compatible
-    "deviceCategory": core_metrics + extended_metrics + limited_metrics,
-    "country": core_metrics + extended_metrics + limited_metrics,
-    "adunit": core_metrics + extended_metrics,  # Ad Unit metrics
-    "inventoryFormat": core_metrics + extended_metrics,  # Inventory format metrics
-    "browser": core_metrics + extended_metrics + limited_metrics,
+    "deviceCategory": core_metrics + extended_metrics,  # TOTAL_AD_REQUESTS not compatible
+    "country": core_metrics + extended_metrics,  # TOTAL_AD_REQUESTS not compatible
+    "adunit": core_metrics + extended_metrics,  # TOTAL_AD_REQUESTS not compatible
+    "inventoryFormat": core_metrics + extended_metrics,  # TOTAL_AD_REQUESTS not compatible
+    "browser": core_metrics + extended_metrics,  # TOTAL_AD_REQUESTS not compatible
 }
 
 # Default metrics for backward compatibility
