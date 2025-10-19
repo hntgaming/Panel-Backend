@@ -43,6 +43,7 @@ urlpatterns = [
 
     # Publisher management endpoints
     path('publishers/', views.list_publishers, name='list_publishers'),
+    path('publishers/<int:user_id>/', views.update_publisher, name='update_publisher'),  # PUT to update
     path('publishers/<int:user_id>/permissions/', views.get_publisher_permissions, name='get_publisher_permissions'),
     path('users/<int:user_id>/permissions/', views.update_publisher_permissions, name='update_publisher_permissions'),
     path('publishers/<int:user_id>/delete/', views.delete_publisher_user, name='delete_publisher_user'),

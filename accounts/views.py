@@ -645,6 +645,39 @@ def list_publishers(request):
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
+@api_view(['PUT'])
+@permission_classes([IsAuthenticated, IsAdminUser])
+def update_publisher(request, user_id):
+    """
+    PUT /api/auth/publishers/{user_id}/ - Update publisher details
+    """
+    try:
+        publisher = User.objects.get(id=user_id, role='publisher')
+        
+        # Update allowed fields
+        allowed_fields = ['company_name', 'site_url', 'network_id', 'revenue_share_percentage', 'phone_number']
+        for field in allowed_fields:
+            if field in request.data:
+                setattr(publisher, field, request.data[field])
+        
+        publisher.save()
+        
+        serializer = PublisherListSerializer(publisher)
+        return Response({
+            'success': True,
+            'message': 'Publisher updated successfully',
+            'data': serializer.data
+        })
+    except User.DoesNotExist:
+        return Response({
+            'error': 'Publisher not found'
+        }, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({
+            'error': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
 @api_view(['GET'])
 @permission_classes([IsAuthenticated, IsAdminUser])
 def get_publisher_permissions(request, user_id):
