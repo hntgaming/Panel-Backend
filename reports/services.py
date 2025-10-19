@@ -227,11 +227,18 @@ class GAMReportService:
             
             # Process each dimension
             dimension_results = {}
+            # Create a simple object to mimic invitation
+            class MockInvitation:
+                def __init__(self, network_code):
+                    self.child_network_code = network_code
+            
+            mock_invitation = MockInvitation(child_network_code)
+            
             for dimension_key in dimension_map.keys():
                 try:
                     records = GAMReportService._fetch_child_dimension_reports(
                         client=client,
-                        invitation={'child_network_code': child_network_code},  # Mock invitation object
+                        invitation=mock_invitation,
                         dimension_key=dimension_key,
                         date_from=date_from,
                         date_to=date_to
