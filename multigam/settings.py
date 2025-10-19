@@ -339,7 +339,7 @@ GAM_SERVICE_ACCOUNT_INFO = {
     'project_id': config('GAM_PROJECT_ID', default='hnt-gaming'),
     'private_key_id': _gam_credentials.get('private_key_id', config('GAM_PRIVATE_KEY_ID', default='')),
     'private_key': _gam_credentials.get('private_key', config('GAM_PRIVATE_KEY', default='')).replace('\\n', '\n'),
-    'client_email': config('GAM_CLIENT_EMAIL', default='report@hnt-gaming.iam.gserviceaccount.com'),
+    'client_email': config('GAM_CLIENT_EMAIL', default='ehumps@hnt-gaming.iam.gserviceaccount.com'),
     'client_id': _gam_credentials.get('client_id', config('GAM_CLIENT_ID', default='')),
     'auth_uri': 'https://accounts.google.com/o/oauth2/auth',
     'token_uri': 'https://oauth2.googleapis.com/token',
@@ -349,9 +349,9 @@ GAM_SERVICE_ACCOUNT_INFO = {
 
 # GAM API Configuration - CORRECTED SCOPES
 GAM_CONFIG = {
-    'PARENT_NETWORK_CODE': config('GAM_PARENT_NETWORK_CODE', default='152344380'),
-    'CHILD_NETWORK_CODE': config('GAM_CHILD_NETWORK_CODE', default='22878573653'),
-    'APPLICATION_NAME': config('GAM_APPLICATION_NAME', default='GAM Management Platform'),
+    'PARENT_NETWORK_CODE': config('GAM_PARENT_NETWORK_CODE', default='23310681755'),
+    'CHILD_NETWORK_CODE': config('GAM_CHILD_NETWORK_CODE', default='23310681755'),
+    'APPLICATION_NAME': config('GAM_APPLICATION_NAME', default='Managed Inventory Publisher Dashboard'),
     'API_VERSION': config('GAM_API_VERSION', default='v202508'),
     'SERVICE_ACCOUNT_INFO': GAM_SERVICE_ACCOUNT_INFO,
     # CRITICAL FIX: Use the correct scope for Ad Manager SOAP API
