@@ -230,7 +230,7 @@ class GAMReportService:
             dimension_results = {}
             # Create a simple object to mimic invitation with all required attributes
             class MockInvitation:
-                def __init__(self, network_code, parent_code):
+                def __init__(self, network_code, parent_code, publisher_obj):
                     self.child_network_code = network_code
                     self.delegation_type = 'MANAGE_INVENTORY'  # Publishers use parent network credentials
                     # Create a mock parent_network object
@@ -238,8 +238,11 @@ class GAMReportService:
                         'network_code': parent_code,
                         'network_name': 'Parent Network'
                     })()
+                    # Store publisher info for dimension values
+                    self.publisher_name = f"{publisher_obj.company_name or publisher_obj.email}"
+                    self.publisher_id = publisher_obj.id
             
-            mock_invitation = MockInvitation(child_network_code, yaml_network_code)
+            mock_invitation = MockInvitation(child_network_code, yaml_network_code, publisher)
             
             for dimension_key in dimension_map.keys():
                 try:
@@ -614,6 +617,10 @@ class GAMReportService:
                         parts.append(str(row_dict.get(col, 'All')))
                     dimension_value = " | ".join(parts)
                 
+                # For overview dimension, use publisher name instead of date
+                if dimension_key == 'overview' and hasattr(invitation, 'publisher_name'):
+                    dimension_value = invitation.publisher_name
+                
                 # Convert and process data - use all available API data directly
                 impressions = GAMReportService._safe_int(row_dict.get('AD_EXCHANGE_LINE_ITEM_LEVEL_IMPRESSIONS', 0))
                 # Convert micros currency (GAM returns monetary values in micros)
@@ -654,7 +661,7 @@ class GAMReportService:
                 # Create record data
                 record_data = {
                     'parent_network_code': invitation.parent_network.network_code,
-                    'publisher_id': None,  # Will be set if needed
+                    'publisher_id': getattr(invitation, 'publisher_id', None),  # Use publisher_id from invitation
                     'child_network_code': invitation.child_network_code,
                     'dimension_type': dimension_key,
                     'dimension_value': dimension_value,
