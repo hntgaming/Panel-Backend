@@ -199,9 +199,10 @@ class GAMReportService:
             logger.info(f"✅ Using parent YAML file: {yaml_filepath} for publisher {child_network_code}")
             
             try:
-                # Get GAM client for child network
-                client = GAMReportService._get_child_network_client(child_network_code)
-                logger.info(f"🔐 Authentication successful for {child_network_code}")
+                # Get GAM client for PARENT network (not child)
+                # Parent network can access all child network data through MANAGE_INVENTORY
+                client = GAMReportService._get_child_network_client(yaml_network_code)
+                logger.info(f"🔐 Authentication successful for parent network {yaml_network_code}")
                 
             except Exception as client_error:
                 error_message = str(client_error)
