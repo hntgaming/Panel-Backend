@@ -1,15 +1,9 @@
-import os
-import django
 from django.core.management.base import BaseCommand, CommandError
 from django.utils import timezone
 from datetime import datetime, timedelta
 import logging
 import concurrent.futures
 import time
-
-# Setup Django environment
-os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'multigam.settings')
-django.setup()
 
 from reports.services import GAMReportService
 # Removed gam_accounts dependencies
