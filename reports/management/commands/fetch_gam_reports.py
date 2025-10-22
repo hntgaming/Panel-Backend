@@ -1,9 +1,15 @@
+import os
+import django
 from django.core.management.base import BaseCommand, CommandError
 from django.utils import timezone
 from datetime import datetime, timedelta
 import logging
 import concurrent.futures
 import time
+
+# Setup Django environment
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'multigam.settings')
+django.setup()
 
 from reports.services import GAMReportService
 # Removed gam_accounts dependencies
@@ -13,10 +19,10 @@ logger = logging.getLogger(__name__)
 # Google Ad Manager API Quota Settings
 # For Ad Manager accounts (not 360): 2 requests per second limit
 # For Ad Manager 360 accounts: 8 requests per second limit
-# We're using Ad Manager accounts, so 2 requests per second
-API_REQUESTS_PER_SECOND = 2
-REQUEST_DELAY = 1.0 / API_REQUESTS_PER_SECOND  # 0.5 seconds between requests
-MAX_CONCURRENT_REQUESTS = 2  # Maximum concurrent API requests
+# We're using Ad Manager 360 accounts, so 8 requests per second
+API_REQUESTS_PER_SECOND = 8
+REQUEST_DELAY = 1.0 / API_REQUESTS_PER_SECOND  # 0.125 seconds between requests
+MAX_CONCURRENT_REQUESTS = 8  # Maximum concurrent API requests for GAM 360
 QUOTA_RETRY_DELAY = 10  # Seconds to wait when quota exceeded
 MAX_QUOTA_RETRIES = 3
 
@@ -51,7 +57,7 @@ class Command(BaseCommand):
             '--max-workers',
             type=int,
             default=MAX_CONCURRENT_REQUESTS,
-            help=f'Maximum number of parallel workers (default: {MAX_CONCURRENT_REQUESTS} - API quota compliant)',
+            help=f'Maximum number of parallel workers (default: {MAX_CONCURRENT_REQUESTS} - GAM 360 API quota compliant)',
         )
         parser.add_argument(
             '--batch-size',
