@@ -1197,26 +1197,26 @@ def financial_summary_view(request):
         else:
             base_queryset = base_queryset.none()
     
-    # Calculate gross revenue (sum of all revenue)
-    gross_revenue = base_queryset.aggregate(
+    # Calculate gross revenue (only from overview dimension to avoid double counting)
+    gross_revenue = base_queryset.filter(
+        dimension_type='overview'
+    ).aggregate(
         total=Sum('revenue')
     )['total'] or 0
     
-    # Calculate parent share based on average revenue share percentage
+    # Calculate parent share based on user's specific revenue share percentage
     parent_share = 0
     
-    # Get average revenue share percentage from publishers
-    from accounts.models import User
-    avg_revenue_share = User.objects.filter(
-        role='publisher'
-    ).aggregate(
-        avg=Sum('revenue_share_percentage')
-    )['avg'] or 0
-    
-    if avg_revenue_share > 0:
-        parent_share = (gross_revenue * Decimal(str(avg_revenue_share)) / 100)
+    if not user.is_admin_user and hasattr(user, 'revenue_share_percentage'):
+        # Use the specific user's revenue share percentage
+        user_revenue_share = user.revenue_share_percentage or 0
+        if user_revenue_share > 0:
+            parent_share = (gross_revenue * Decimal(str(user_revenue_share)) / 100)
+        else:
+            # Default to 20% if no revenue share is set
+            parent_share = (gross_revenue * Decimal('0.20'))
     else:
-        # Default to 20% if no revenue share is set
+        # For admin users, use default 20%
         parent_share = (gross_revenue * Decimal('0.20'))
     
     return Response({
