@@ -62,9 +62,9 @@ EMAIL_HOST = 'smtp.gmail.com'
 EMAIL_PORT = 465
 EMAIL_USE_SSL = True
 EMAIL_USE_TLS = False  # Important: must be False when using SSL/465
-EMAIL_HOST_USER = 'notification@mail.hntgaming.me'
-EMAIL_HOST_PASSWORD = 'fqho jbnd tedc dzhd'  # This must be an App Password
-DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
+EMAIL_HOST_USER = config('EMAIL_HOST_USER', default='notification@mail.hntgaming.me')
+EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default='fqho jbnd tedc dzhd')  # This must be an App Password
+DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', default=EMAIL_HOST_USER)
 
 
 FRONTEND_BASE_URL = "https://publisher.hntgaming.me"
