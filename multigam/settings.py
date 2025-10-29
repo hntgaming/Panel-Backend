@@ -62,8 +62,8 @@ EMAIL_HOST = 'smtp.gmail.com'
 EMAIL_PORT = 465
 EMAIL_USE_SSL = True
 EMAIL_USE_TLS = False  # Important: must be False when using SSL/465
-EMAIL_HOST_USER = 'askhntgaming@gmail.com'
-EMAIL_HOST_PASSWORD = 'oziu vcug aszd twno'  # This must be an App Password
+EMAIL_HOST_USER = 'notification@mail.hntgaming.me'
+EMAIL_HOST_PASSWORD = 'fqho jbnd tedc dzhd'  # This must be an App Password
 DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
 
 
