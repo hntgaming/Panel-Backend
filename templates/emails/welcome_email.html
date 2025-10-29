@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Welcome to HNT Gaming - AdTech Platform</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background-color: #f8fafc;
+        }
+        
+        .email-container {
+            max-width: 600px;
+            margin: 0 auto;
+            background-color: #ffffff;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 40px 30px;
+            text-align: center;
+            color: white;
+        }
+        
+        .logo {
+            font-size: 28px;
+            font-weight: bold;
+            margin-bottom: 10px;
+            letter-spacing: 1px;
+        }
+        
+        .tagline {
+            font-size: 16px;
+            opacity: 0.9;
+            font-weight: 300;
+        }
+        
+        .content {
+            padding: 40px 30px;
+        }
+        
+        .welcome-title {
+            font-size: 24px;
+            color: #2d3748;
+            margin-bottom: 20px;
+            font-weight: 600;
+        }
+        
+        .welcome-text {
+            font-size: 16px;
+            color: #4a5568;
+            margin-bottom: 30px;
+            line-height: 1.7;
+        }
+        
+        .cta-button {
+            display: inline-block;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 16px 32px;
+            text-decoration: none;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 16px;
+            margin: 20px 0;
+            transition: transform 0.2s ease;
+        }
+        
+        .cta-button:hover {
+            transform: translateY(-2px);
+        }
+        
+        .features {
+            background-color: #f7fafc;
+            padding: 30px;
+            margin: 30px 0;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+        }
+        
+        .features-title {
+            font-size: 18px;
+            color: #2d3748;
+            margin-bottom: 20px;
+            font-weight: 600;
+        }
+        
+        .feature-list {
+            list-style: none;
+            padding: 0;
+        }
+        
+        .feature-item {
+            display: flex;
+            align-items: center;
+            margin-bottom: 12px;
+            font-size: 14px;
+            color: #4a5568;
+        }
+        
+        .feature-icon {
+            width: 20px;
+            height: 20px;
+            background-color: #667eea;
+            border-radius: 50%;
+            margin-right: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        
+        .footer {
+            background-color: #2d3748;
+            color: #a0aec0;
+            padding: 30px;
+            text-align: center;
+            font-size: 14px;
+        }
+        
+        .footer-links {
+            margin: 20px 0;
+        }
+        
+        .footer-links a {
+            color: #667eea;
+            text-decoration: none;
+            margin: 0 15px;
+        }
+        
+        .footer-links a:hover {
+            text-decoration: underline;
+        }
+        
+        .security-note {
+            background-color: #fff5f5;
+            border: 1px solid #fed7d7;
+            border-radius: 6px;
+            padding: 15px;
+            margin: 20px 0;
+            font-size: 14px;
+            color: #c53030;
+        }
+        
+        .stats {
+            display: flex;
+            justify-content: space-around;
+            margin: 30px 0;
+            text-align: center;
+        }
+        
+        .stat-item {
+            flex: 1;
+        }
+        
+        .stat-number {
+            font-size: 24px;
+            font-weight: bold;
+            color: #667eea;
+            display: block;
+        }
+        
+        .stat-label {
+            font-size: 12px;
+            color: #718096;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        
+        @media (max-width: 600px) {
+            .email-container {
+                margin: 10px;
+                border-radius: 8px;
+            }
+            
+            .header, .content, .footer {
+                padding: 20px;
+            }
+            
+            .stats {
+                flex-direction: column;
+                gap: 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="email-container">
+        <!-- Header -->
+        <div class="header">
+            <div class="logo">HNT Gaming</div>
+            <div class="tagline">Advanced AdTech Platform</div>
+        </div>
+        
+        <!-- Main Content -->
+        <div class="content">
+            <h1 class="welcome-title">Welcome to the Future of AdTech! 🚀</h1>
+            
+            <p class="welcome-text">
+                Hi <strong>{{ user_name }}</strong>,<br><br>
+                Welcome to HNT Gaming's cutting-edge AdTech platform! You've been granted access to our powerful Google Ad Manager integration system, designed specifically for publishers and advertisers in the digital advertising ecosystem.
+            </p>
+            
+            <!-- CTA Button -->
+            <div style="text-align: center;">
+                <a href="{{ reset_url }}" class="cta-button">Set Your Password & Get Started</a>
+            </div>
+            
+            <!-- Features Section -->
+            <div class="features">
+                <h3 class="features-title">What You Can Do:</h3>
+                <ul class="feature-list">
+                    <li class="feature-item">
+                        <span class="feature-icon">📊</span>
+                        Real-time revenue analytics and reporting
+                    </li>
+                    <li class="feature-item">
+                        <span class="feature-icon">💰</span>
+                        Automated revenue sharing calculations
+                    </li>
+                    <li class="feature-item">
+                        <span class="feature-icon">📈</span>
+                        Advanced GAM integration and optimization
+                    </li>
+                    <li class="feature-item">
+                        <span class="feature-icon">🔒</span>
+                        Secure payment management system
+                    </li>
+                    <li class="feature-item">
+                        <span class="feature-icon">⚡</span>
+                        Lightning-fast data processing
+                    </li>
+                </ul>
+            </div>
+            
+            <!-- Stats Section -->
+            <div class="stats">
+                <div class="stat-item">
+                    <span class="stat-number">99.9%</span>
+                    <span class="stat-label">Uptime</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-number">&lt;1s</span>
+                    <span class="stat-label">Response Time</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-number">24/7</span>
+                    <span class="stat-label">Support</span>
+                </div>
+            </div>
+            
+            <!-- Security Note -->
+            <div class="security-note">
+                <strong>🔐 Security Notice:</strong> This link is valid for 24 hours. If you didn't request this invitation, please ignore this email or contact our support team immediately.
+            </div>
+            
+            <p class="welcome-text">
+                Ready to revolutionize your ad management? Click the button above to set your password and start exploring the platform!
+            </p>
+        </div>
+        
+        <!-- Footer -->
+        <div class="footer">
+            <div class="footer-links">
+                <a href="https://publisher.hntgaming.me">Dashboard</a>
+                <a href="https://hntgaming.me">Website</a>
+                <a href="mailto:support@hntgaming.me">Support</a>
+            </div>
+            <p>&copy; 2025 HNT Gaming. All rights reserved.</p>
+            <p>This email was sent to {{ user_email }}. If you have any questions, please contact our support team.</p>
+        </div>
+    </div>
+</body>
+</html>
