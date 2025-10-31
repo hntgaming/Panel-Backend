@@ -8,9 +8,9 @@ cd /home/ubuntu/MI-Backend
 # Activate virtual environment
 source venv/bin/activate
 
-# Use UTC dates to align with GAM data finalization
-TODAY=$(date -u +%Y-%m-%d)
-YESTERDAY=$(date -u -d "yesterday" +%Y-%m-%d)
+# Use America/New_York timezone to align with GAM reporting window
+TODAY=$(TZ="America/New_York" date +%Y-%m-%d)
+YESTERDAY=$(TZ="America/New_York" date -d "yesterday" +%Y-%m-%d)
 
 # Log file
 LOG_FILE="/home/ubuntu/MI-Backend/logs/cron-fetch-reports.log"
