@@ -201,10 +201,7 @@ class GAMReportService:
             try:
                 # Get GAM client for PARENT network (not child)
                 # Parent network can access all child network data through MANAGE_INVENTORY
-                client = GAMReportService._get_child_network_client(
-                    child_network_code,
-                    use_parent_credentials=True,
-                )
+                client = GAMReportService._get_child_network_client(yaml_network_code)
                 logger.info(f"🔐 Authentication successful for parent network {yaml_network_code}")
                 
             except Exception as client_error:
@@ -314,11 +311,7 @@ class GAMReportService:
             
             try:
                 # Get GAM client directly for child network (no parent dependency)
-                use_parent_credentials = delegation_type != 'MANAGE_ACCOUNT'
-                client = GAMReportService._get_child_network_client(
-                    child_network_code,
-                    use_parent_credentials=use_parent_credentials,
-                )
+                client = GAMReportService._get_child_network_client(child_network_code)
                 logger.info(f"🔐 Authentication successful for {child_network_code} via {yaml_network_code}")
                 
                 
@@ -422,11 +415,11 @@ class GAMReportService:
             raise
 
     @staticmethod
-    def _get_child_network_client(child_network_code, use_parent_credentials=True):
-        """Get GAM client for child network using appropriate credentials."""
+    def _get_child_network_client(child_network_code):
+        """Get GAM client for child network using parent YAML configuration"""
         try:
-            target_network_code = None if use_parent_credentials else child_network_code
-            return GAMClientService.get_googleads_client(target_network_code)
+            # Use parent YAML configuration for all managed inventory operations
+            return GAMClientService.get_googleads_client(child_network_code)
         except Exception as e:
             logger.warning(f"⚠️ Failed to get client for {child_network_code}: {str(e)}")
             raise
