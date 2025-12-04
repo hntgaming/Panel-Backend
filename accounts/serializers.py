@@ -5,10 +5,13 @@ from rest_framework import serializers
 from django.contrib.auth import authenticate
 from django.contrib.auth.password_validation import validate_password
 from django.core.validators import RegexValidator
+import logging
 
 from core.models import StatusChoices
 from .models import User, PublisherPermission
 from .services import send_welcome_email_with_reset_link
+
+logger = logging.getLogger(__name__)
 
 class UserRegistrationSerializer(serializers.ModelSerializer):
     username = serializers.CharField(
@@ -413,4 +416,130 @@ class PaymentDetailListSerializer(serializers.ModelSerializer):
             'created_at',
             'updated_at',
         ]
+
+
+class PublicSignupSerializer(serializers.Serializer):
+    """
+    Public signup serializer for new publishers
+    Fields: name, phone (WhatsApp), email, site_link
+    Automatically sends MCM invitation via GAM API
+    """
+    name = serializers.CharField(
+        max_length=100,
+        help_text="Full name of the publisher"
+    )
+    phone = serializers.CharField(
+        max_length=20,
+        validators=[
+            RegexValidator(
+                regex=r'^\+?1?\d{9,15}$',
+                message="Phone number must be in format: '+999999999'. Up to 15 digits allowed."
+            )
+        ],
+        help_text="WhatsApp phone number"
+    )
+    email = serializers.EmailField(
+        help_text="Email address (must not have existing AdSense/AdManager account)"
+    )
+    site_link = serializers.URLField(
+        help_text="Website URL"
+    )
+    
+    def validate_email(self, value):
+        """Check if email already exists"""
+        if User.objects.filter(email__iexact=value).exists():
+            raise serializers.ValidationError(
+                "A user with this email address already exists. Please use a different email or login."
+            )
+        return value.lower()
+    
+    def validate_site_link(self, value):
+        """Validate and normalize site link"""
+        # Ensure URL has protocol
+        value = value.strip()
+        if not value.startswith('http://') and not value.startswith('https://'):
+            value = f'https://{value}'
+        # Remove trailing slash for consistency
+        if value.endswith('/'):
+            value = value[:-1]
+        return value
+    
+    def create(self, validated_data):
+        """Create user and send MCM invitation"""
+        from reports.gam_client import GAMClientService
+        from core.models import StatusChoices
+        
+        # Extract data
+        name = validated_data['name']
+        phone = validated_data['phone']
+        email = validated_data['email']
+        site_link = validated_data['site_link']
+        
+        # Parse name into first_name and last_name
+        name_parts = name.strip().split(maxsplit=1)
+        first_name = name_parts[0] if name_parts else name
+        last_name = name_parts[1] if len(name_parts) > 1 else ""
+        
+        # Generate username from email
+        username = email.split('@')[0]
+        # Ensure username is unique
+        base_username = username
+        counter = 1
+        while User.objects.filter(username=username).exists():
+            username = f"{base_username}{counter}"
+            counter += 1
+        
+        # Create user with temporary password (will be set via welcome email)
+        import secrets
+        temp_password = secrets.token_urlsafe(16)
+        
+        user = User.objects.create_user(
+            username=username,
+            email=email,
+            first_name=first_name,
+            last_name=last_name,
+            phone_number=phone,
+            site_url=validated_data['site_link'],  # Store original URL with https
+            role=User.UserRole.PUBLISHER,
+            status=StatusChoices.PENDING_APPROVAL,  # Will be activated after password reset
+            password=temp_password
+        )
+        
+        # Create child network name: site link without https + "PubDash"
+        # Remove https:// or http://
+        site_name = validated_data['site_link']
+        if site_name.startswith('https://'):
+            site_name = site_name[8:]
+        elif site_name.startswith('http://'):
+            site_name = site_name[7:]
+        # Remove trailing slash
+        if site_name.endswith('/'):
+            site_name = site_name[:-1]
+        # Remove www. if present
+        if site_name.startswith('www.'):
+            site_name = site_name[4:]
+        
+        child_network_name = f"{site_name} - PubDash"
+        
+        # Send MCM invitation via GAM API
+        mcm_result = GAMClientService.send_mcm_invitation(
+            email=email,
+            child_network_name=child_network_name
+        )
+        
+        if not mcm_result.get('success'):
+            # If MCM invitation fails, still create user but log the error
+            # User can be manually set up later
+            logger.warning(f"⚠️ User created but MCM invitation failed: {mcm_result.get('error')}")
+            # Don't raise exception - allow user creation to proceed
+            # Admin can manually send invitation later
+        
+        # Send welcome email with password reset link
+        send_welcome_email_with_reset_link(user)
+        
+        # Assign default permissions (reports and settings)
+        PublisherPermission.objects.create(user=user, permission='reports')
+        PublisherPermission.objects.create(user=user, permission='settings')
+        
+        return user
 

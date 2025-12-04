@@ -109,42 +109,42 @@ class GAMReportService:
         logger.info(f"🚀 Starting GAM report sync {sync_id} for {date_from} to {date_to}")
         
         try:
-            # Get eligible child networks for main reports (invited/approved/accepted status)
-            # Exclude closed accounts (closed_policy_violation, closed_invalid_activity, etc.)
-            eligible_invitations = MCMInvitation.objects.filter(
-                status__in=['invited', 'approved', 'accepted'],
-                user_status='active'
-            ).exclude(
-                status__in=['closed_policy_violation', 'closed_invalid_activity', 'declined', 'expired', 'withdrawn_by_parent']
-            ).select_related('parent_network')
+            # Get eligible publishers with active status and network_id
+            # For managed inventory, we use User model with network_id
+            from core.models import StatusChoices
+            eligible_publishers = User.objects.filter(
+                role=User.UserRole.PUBLISHER,
+                status=StatusChoices.ACTIVE,
+                network_id__isnull=False
+            ).exclude(network_id='')
             
-            logger.info(f"📊 Found {eligible_invitations.count()} eligible child networks")
+            logger.info(f"📊 Found {eligible_publishers.count()} eligible publishers")
             
             successful_count = 0
             failed_count = 0
             total_records_created = 0
             total_records_updated = 0
             
-            # Process each child network individually using their own YAML files
-            for invitation in eligible_invitations:
+            # Process each publisher network individually
+            for publisher in eligible_publishers:
                 try:
-                    logger.info(f"🔄 Processing child network {invitation.child_network_code} (delegation: {invitation.delegation_type})")
+                    logger.info(f"🔄 Processing publisher network {publisher.network_id} for {publisher.email}")
                     
-                    result = GAMReportService._process_child_network(
-                        invitation, date_from, date_to
+                    result = GAMReportService._process_publisher_network(
+                        publisher, date_from, date_to
                     )
                     
                     successful_count += 1
-                    total_records_created += result['records_created']
-                    total_records_updated += result['records_updated']
+                    total_records_created += result.get('records_created', 0)
+                    total_records_updated += result.get('records_updated', 0)
                     
-                    logger.info(f"✅ Successfully processed {invitation.child_network_code}: {result['records_created']} created, {result['records_updated']} updated")
+                    logger.info(f"✅ Successfully processed {publisher.network_id}: {result.get('records_created', 0)} created, {result.get('records_updated', 0)} updated")
                     
                 except Exception as e:
                     failed_count += 1
                     error_msg = str(e)
-                    logger.error(f"❌ Failed to process child network {invitation.child_network_code}: {error_msg}")
-                    sync_log.add_network_error(invitation.child_network_code, error_msg)
+                    logger.error(f"❌ Failed to process publisher network {publisher.network_id}: {error_msg}")
+                    sync_log.add_network_error(publisher.network_id or 'unknown', error_msg)
             
             # All processing completed successfully
             
@@ -292,13 +292,18 @@ class GAMReportService:
         
         try:
             # Determine which YAML file to use based on delegation type
+            # For managed inventory, always use parent network YAML
+            from decouple import config
+            parent_network_code = config('GAM_PARENT_NETWORK_CODE', default='23310681755')
+            
             if delegation_type == 'MANAGE_ACCOUNT':
                 yaml_network_code = child_network_code
                 target_network_code = child_network_code
                 logger.info(f"🔑 Using MANAGE_ACCOUNT: child YAML {child_network_code}")
             else:
-                yaml_network_code = invitation.parent_network.network_code
-                target_network_code = invitation.parent_network.network_code
+                # Use parent network for MANAGE_INVENTORY
+                yaml_network_code = parent_network_code
+                target_network_code = parent_network_code
                 logger.info(f"🔑 Using MANAGE_INVENTORY: parent YAML {yaml_network_code}")
             
             # Check if YAML file exists
@@ -658,9 +663,13 @@ class GAMReportService:
                 fill_rate = GAMReportService._quantize(fill_rate, 2)
                 viewable_impressions_rate = GAMReportService._quantize(viewable_impressions_rate, 2)
                 
+                # Get parent network code from config
+                from decouple import config
+                parent_network_code = config('GAM_PARENT_NETWORK_CODE', default='23310681755')
+                
                 # Create record data
                 record_data = {
-                    'parent_network_code': invitation.parent_network.network_code,
+                    'parent_network_code': parent_network_code,
                     'publisher_id': getattr(invitation, 'publisher_id', None),  # Use publisher_id from invitation
                     'child_network_code': invitation.child_network_code,
                     'dimension_type': dimension_key,

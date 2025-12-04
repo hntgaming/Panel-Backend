@@ -2,6 +2,7 @@
 Clean authentication views for API-only endpoints
 No CSRF decorators needed - using JWT authentication only
 """
+import logging
 from rest_framework import status, generics, permissions
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
@@ -19,6 +20,8 @@ from core.models import StatusChoices
 # Removed gam_accounts dependencies
 
 from .models import PublisherPermission, User
+
+logger = logging.getLogger(__name__)
 from .permissions import load_publisher_permissions
 from .serializers import (
     PublisherListSerializer,
@@ -67,6 +70,60 @@ class UserRegistrationView(generics.CreateAPIView):
                 'access': str(refresh.access_token),
             }
         }, status=status.HTTP_201_CREATED)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def public_signup_view(request):
+    """
+    Public signup endpoint for new publishers
+    POST /api/auth/public-signup/
+    
+    Body:
+    {
+        "name": "John Doe",
+        "phone": "+1234567890",
+        "email": "publisher@example.com",
+        "site_link": "https://example.com"
+    }
+    
+    This endpoint:
+    1. Creates a new publisher user
+    2. Sends MCM invitation via Google AdManager API
+    3. Sends welcome email with password reset link
+    """
+    from .serializers import PublicSignupSerializer
+    
+    serializer = PublicSignupSerializer(data=request.data)
+    
+    if serializer.is_valid():
+        try:
+            user = serializer.save()
+            
+            return Response({
+                'success': True,
+                'message': 'Signup successful! Please check your email to set your password and accept the GAM invitation.',
+                'user': {
+                    'id': user.id,
+                    'email': user.email,
+                    'name': user.get_full_name()
+                }
+            }, status=status.HTTP_201_CREATED)
+            
+        except Exception as e:
+            import traceback
+            error_details = traceback.format_exc()
+            logger.error(f"❌ Public signup error: {error_details}")
+            
+            return Response({
+                'success': False,
+                'error': f'Signup failed: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    return Response({
+        'success': False,
+        'errors': serializer.errors
+    }, status=status.HTTP_400_BAD_REQUEST)
 
 
 @api_view(['POST'])
@@ -151,7 +208,7 @@ def user_logout_view(request):
             }, status=status.HTTP_400_BAD_REQUEST)
         
         # Log the actual error for debugging
-        print(f"Logout error: {error_msg}")
+        logger.error(f"Logout error: {error_msg}")
         
         return Response({
             'error': f'Logout failed: {error_msg}'
@@ -411,15 +468,12 @@ def update_partner_permissions(request, user_id):
         if permission not in valid_permissions:
             return Response({"error": f"Invalid permission: {permission}"}, status=400)
 
+        # Simplified for managed inventory - no GAMNetwork model needed
+        # MCM invitations are handled via GAM API directly
         if permission == 'mcm_invites':
-            if not parent_gam_id:
-                return Response({"error": "parent_gam_network is required for mcm_invites"}, status=400)
-            try:
-                parent_network = GAMNetwork.objects.get(id=parent_gam_id, network_type='parent')
-            except GAMNetwork.DoesNotExist:
-                return Response({"error": f"Invalid parent GAM network ID: {parent_gam_id}"}, status=400)
-        else:
-            parent_network = None
+            # For managed inventory, we don't need parent_gam_network
+            # The system uses the parent network from settings
+            pass
 
         new_permissions.append(PublisherPermission(
             user=user,

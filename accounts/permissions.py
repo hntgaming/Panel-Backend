@@ -196,9 +196,8 @@ class PublisherQuerysetMixin:
                 # Simplified for managed inventory - no assigned accounts
                 assigned_codes = []
                 queryset = queryset.filter(child_network_code__in=list(assigned_codes))
-            # For MCMInvitation model itself
-            elif queryset.model.__name__ == 'MCMInvitation':
-                queryset = queryset.filter(id__in=list(assigned_ids))
+            # MCMInvitation model removed - using User model with network_id instead
+            # No additional filtering needed for managed inventory
         
         return queryset
 

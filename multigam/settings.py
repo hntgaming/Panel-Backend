@@ -12,7 +12,10 @@ from decouple import config
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = config('SECRET_KEY', default='dev-secret-key-phase1')
+# SECRET_KEY must be set in environment variables - no default for production
+SECRET_KEY = config('SECRET_KEY', default=None)
+if not SECRET_KEY:
+    raise ValueError("SECRET_KEY must be set in environment variables for production")
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = config('DEBUG', default=False, cast=bool)
@@ -261,9 +264,11 @@ CSRF_COOKIE_SAMESITE = 'Lax'
 # DEVELOPMENT SETTINGS
 # =====================================================================
 
+# Security: Never allow all hosts, even in DEBUG mode
+# if DEBUG:
+#     ALLOWED_HOSTS = ['*']  # REMOVED - Security risk
+
 if DEBUG:
-    ALLOWED_HOSTS = ['*']
-        
     # Logging for debugging
     LOGGING = {
         'version': 1,

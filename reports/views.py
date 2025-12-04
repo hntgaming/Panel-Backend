@@ -359,12 +359,15 @@ def report_dashboard_view(request):
     
     # Network counts
     if user.is_admin_user:
-        total_networks = GAMNetwork.objects.filter(network_type='parent').count()
-        active_children = MCMInvitation.objects.filter(
-            status='accepted', 
-            user_status='active'
-        ).count()
-        total_partners = User.objects.filter(role='partner').count()
+        from core.models import StatusChoices
+        # Count active publishers with network_id
+        total_networks = 1  # Parent network count (simplified for managed inventory)
+        active_children = User.objects.filter(
+            role=User.UserRole.PUBLISHER,
+            status=StatusChoices.ACTIVE,
+            network_id__isnull=False
+        ).exclude(network_id='').count()
+        total_partners = User.objects.filter(role=User.UserRole.PUBLISHER).count()
     else:
         # Partner view
         # Simplified for managed inventory - return default values

@@ -11,6 +11,7 @@ app_name = 'accounts'
 urlpatterns = [
     # Authentication endpoints
     path('register/', views.UserRegistrationView.as_view(), name='register'),
+    path('public-signup/', views.public_signup_view, name='public_signup'),
     path('login/', views.user_login_view, name='login'),
     path('logout/', views.user_logout_view, name='logout'),
     
