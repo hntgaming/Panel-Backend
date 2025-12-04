@@ -16,12 +16,14 @@ from rest_framework.views import APIView
 from django.contrib.auth.tokens import default_token_generator
 from django.utils.http import urlsafe_base64_decode
 from django.contrib.auth.password_validation import validate_password
+from django.conf import settings
 from core.models import StatusChoices
 # Removed gam_accounts dependencies
 
 from .models import PublisherPermission, User
 
 logger = logging.getLogger(__name__)
+DEBUG = settings.DEBUG
 from .permissions import load_publisher_permissions
 from .serializers import (
     PublisherListSerializer,
@@ -133,40 +135,75 @@ def user_login_view(request):
     Enhanced user login endpoint with IP tracking
     POST /api/auth/login/
     """
-    serializer = UserLoginSerializer(
-        data=request.data,
-        context={'request': request}
-    )
+    try:
+        serializer = UserLoginSerializer(
+            data=request.data,
+            context={'request': request}
+        )
+        
+        if serializer.is_valid():
+            user = serializer.validated_data['user']
+            
+            # Update last login IP
+            try:
+                x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+                if x_forwarded_for:
+                    ip = x_forwarded_for.split(',')[0].strip()
+                else:
+                    ip = request.META.get('REMOTE_ADDR', '')
+                
+                if ip:
+                    user.last_login_ip = ip
+                    user.save(update_fields=['last_login_ip'])
+            except Exception as ip_error:
+                # Log IP update error but don't fail login
+                logger.warning(f"Failed to update login IP: {str(ip_error)}")
+            
+            # Generate JWT tokens
+            try:
+                refresh = RefreshToken.for_user(user)
+            except Exception as token_error:
+                logger.error(f"Failed to generate JWT tokens: {str(token_error)}")
+                return Response({
+                    'error': 'Failed to generate authentication tokens. Please try again.'
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
+            # Serialize user data
+            try:
+                user_data = UserProfileSerializer(user).data
+            except Exception as serialization_error:
+                logger.error(f"Failed to serialize user data: {str(serialization_error)}")
+                # Return minimal user data if serialization fails
+                user_data = {
+                    'id': user.id,
+                    'email': user.email,
+                    'first_name': user.first_name,
+                    'last_name': user.last_name,
+                    'role': user.role,
+                }
+            
+            return Response({
+                'message': 'Login successful',
+                'user': user_data,
+                'tokens': {
+                    'refresh': str(refresh),
+                    'access': str(refresh.access_token),
+                }
+            }, status=status.HTTP_200_OK)
+        
+        # Return validation errors
+        return Response(
+            serializer.errors,
+            status=status.HTTP_400_BAD_REQUEST
+        )
     
-    if serializer.is_valid():
-        user = serializer.validated_data['user']
-        
-        # Update last login IP
-        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
-        if x_forwarded_for:
-            ip = x_forwarded_for.split(',')[0]
-        else:
-            ip = request.META.get('REMOTE_ADDR')
-        
-        user.last_login_ip = ip
-        user.save(update_fields=['last_login_ip'])
-        
-        # Generate JWT tokens
-        refresh = RefreshToken.for_user(user)
-        
+    except Exception as e:
+        # Log the full error for debugging
+        logger.error(f"Login view error: {str(e)}", exc_info=True)
         return Response({
-            'message': 'Login successful',
-            'user': UserProfileSerializer(user).data,
-            'tokens': {
-                'refresh': str(refresh),
-                'access': str(refresh.access_token),
-            }
-        }, status=status.HTTP_200_OK)
-    
-    return Response(
-        serializer.errors,
-        status=status.HTTP_400_BAD_REQUEST
-    )
+            'error': 'An error occurred during login. Please try again.',
+            'detail': str(e) if DEBUG else None
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @api_view(['POST'])
