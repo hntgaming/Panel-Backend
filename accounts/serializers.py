@@ -219,8 +219,12 @@ class UserProfileSerializer(serializers.ModelSerializer):
     full_name = serializers.CharField(source='get_full_name', read_only=True)
     is_active_user = serializers.BooleanField(read_only=True)
     is_admin_user = serializers.BooleanField(read_only=True)
-    is_partner_user = serializers.BooleanField(read_only=True)
-    role_display = serializers.CharField(source='get_role_display', read_only=True)
+    # Removed is_partner_user - not in User model
+    role_display = serializers.SerializerMethodField()
+    
+    def get_role_display(self, obj):
+        """Get human-readable role display"""
+        return obj.get_role_display() if hasattr(obj, 'get_role_display') else obj.role.title()
     
     class Meta:
         model = User
@@ -236,7 +240,6 @@ class UserProfileSerializer(serializers.ModelSerializer):
             'role',
             'role_display',
             'is_admin_user',
-            'is_partner_user',
             'email_notifications',
             'slack_notifications',
             'slack_webhook_url',

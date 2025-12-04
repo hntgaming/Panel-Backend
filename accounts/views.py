@@ -199,10 +199,13 @@ def user_login_view(request):
     
     except Exception as e:
         # Log the full error for debugging
-        logger.error(f"Login view error: {str(e)}", exc_info=True)
+        import traceback
+        error_trace = traceback.format_exc()
+        logger.error(f"Login view error: {str(e)}\n{error_trace}")
+        # Always return error detail in production for debugging
         return Response({
             'error': 'An error occurred during login. Please try again.',
-            'detail': str(e) if DEBUG else None
+            'detail': str(e)
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
