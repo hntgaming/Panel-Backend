@@ -225,10 +225,17 @@ SIMPLE_JWT = {
 # CORS CONFIGURATION
 # =====================================================================
 
-CORS_ALLOWED_ORIGINS = config(
+# CORS allowed origins - get from env or use defaults
+cors_origins_str = config(
     "CORS_ALLOWED_ORIGINS",
-    default="https://api2.hntgaming.me,https://publisher.hntgaming.me,http://localhost:3010,http://127.0.0.1:3010"
-).split(",")
+    default="https://publisher.hntgaming.me,https://api2.hntgaming.me,http://localhost:3010,http://127.0.0.1:3010"
+)
+# Clean and split origins
+CORS_ALLOWED_ORIGINS = [origin.strip() for origin in cors_origins_str.split(",") if origin.strip()]
+
+# Ensure publisher.hntgaming.me is always included
+if 'https://publisher.hntgaming.me' not in CORS_ALLOWED_ORIGINS:
+    CORS_ALLOWED_ORIGINS.append('https://publisher.hntgaming.me')
 
 # Set to True to allow all origins (for development only)
 CORS_ALLOW_ALL_ORIGINS = config("CORS_ALLOW_ALL_ORIGINS", default=False, cast=bool)
