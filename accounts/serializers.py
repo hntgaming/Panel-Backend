@@ -521,10 +521,17 @@ class PublicSignupSerializer(serializers.Serializer):
         
         child_network_name = f"{site_name} - PubDash"
         
-        # Send MCM invitation via GAM API
+        # For managed inventory, we can send MCM invitation without child_network_code or revenue share
+        # The invitation will be sent to the email, and GAM will handle the network code when accepted
+        logger.info(f"🚀 Sending MCM invitation for managed inventory to {email}")
+        
+        # Send MCM invitation via GAM API (no child_network_code or revenue share needed for MI)
         mcm_result = GAMClientService.send_mcm_invitation(
             email=email,
-            child_network_name=child_network_name
+            child_network_name=child_network_name,
+            child_network_code=None,  # Not required for managed inventory
+            revenue_share_percentage=None,  # Not required for managed inventory
+            delegation_type='MANAGE_INVENTORY'
         )
         
         if not mcm_result.get('success'):

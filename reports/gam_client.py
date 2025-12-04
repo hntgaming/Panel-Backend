@@ -91,89 +91,205 @@ class GAMClientService:
             }
     
     @staticmethod
-    def send_mcm_invitation(email, child_network_name):
+    def send_mcm_invitation(email, child_network_name, child_network_code=None, revenue_share_percentage=None, delegation_type='MANAGE_INVENTORY'):
         """
         Send MCM (Managed Content Management) invitation via Google AdManager API
-        This creates a child network invitation for managed inventory delegation
+        Uses CompanyService.createCompanies() method (same as GAM-Sentinel)
+        
+        For Managed Inventory: No revenue share or child network code required
         
         Args:
             email: Email address to send invitation to (must not have existing AdSense/AdManager)
             child_network_name: Name for the child network (site link without https + "PubDash")
+            child_network_code: Optional child network code (not required for managed inventory)
+            revenue_share_percentage: Optional revenue share percentage (not used for managed inventory)
+            delegation_type: Delegation type - 'MANAGE_INVENTORY' (default) or 'MANAGE_ACCOUNT'
         
         Returns:
-            dict: {'success': bool, 'invitation_id': str or None, 'error': str or None}
+            dict: {'success': bool, 'gam_company_id': str or None, 'error': str or None}
         """
         try:
             from decouple import config
+            from googleads import ad_manager
             
             # Get parent network code
             parent_network_code = config('GAM_PARENT_NETWORK_CODE', default='23310681755')
             
-            # Get GAM client using parent network
+            # Get GAM client using parent network YAML
             client = GAMClientService.get_googleads_client(parent_network_code)
             
-            # Get NetworkService for creating child network invitations
-            network_service = client.GetService("NetworkService", version="v202508")
+            # Use CompanyService (not NetworkService) - this is the correct API for MCM invitations
+            company_service = client.GetService("CompanyService", version="v202511")
             
-            # Create child network invitation
-            # For GAM 360, we use makeTestNetwork or createChildNetwork
-            # Since we're sending an invitation, we'll use the invitation approach
+            # For managed inventory, revenue share is not required (set to 0)
+            revenue_share_millipercent = 0
+            
+            logger.info(f"📊 Managed Inventory invitation - no revenue share required")
+            
+            # For managed inventory, child_network_code is optional
+            # If not provided, GAM will handle it when the invitation is accepted
+            # Build company structure - childPublisher is required but childNetworkCode can be omitted for MI
+            child_publisher_data = {
+                "proposedDelegationType": delegation_type,
+                "proposedRevenueShareMillipercent": revenue_share_millipercent,
+            }
+            
+            # Only add childNetworkCode if provided (optional for managed inventory)
+            if child_network_code:
+                child_publisher_data["childNetworkCode"] = child_network_code
+                logger.info(f"📋 Using provided child network code: {child_network_code}")
+            else:
+                logger.info(f"📋 No child network code provided - GAM will handle during invitation acceptance")
+            
+            # Company structure for MCM invitation (managed inventory format)
+            company = {
+                "name": child_network_name,
+                "type": "CHILD_PUBLISHER",
+                "childPublisher": child_publisher_data,
+                "email": email,
+            }
+            
+            logger.info(f"🚀 Sending MCM invitation with company structure: {company}")
+            
             try:
-                # Create child network with invitation
-                child_network = {
-                    'displayName': child_network_name,
-                    'email': email
-                }
+                # Create company (this sends the MCM invitation)
+                created_companies = company_service.createCompanies([company])
+                created_company = created_companies[0]
                 
-                # Use makeTestNetwork for testing or createChildNetwork for production
-                # For managed inventory, we typically create a child network
-                result = network_service.createChildNetwork(child_network)
+                # Extract company ID (handle both dict and object formats)
+                gam_company_id = None
+                if hasattr(created_company, 'id'):
+                    gam_company_id = str(created_company.id)
+                elif isinstance(created_company, dict):
+                    gam_company_id = str(created_company.get('id', ''))
                 
-                logger.info(f"✅ MCM invitation sent to {email} for network: {child_network_name}")
+                logger.info(f"✅ MCM invitation sent successfully to {email}")
+                logger.info(f"   GAM Company ID: {gam_company_id}")
+                logger.info(f"   Delegation Type: {delegation_type}")
+                if child_network_code:
+                    logger.info(f"   Child Network: {child_network_code}")
                 
                 return {
                     'success': True,
-                    'invitation_id': result.get('networkCode'),
-                    'network_code': str(result.get('networkCode', '')),
-                    'message': f'MCM invitation sent successfully to {email}'
+                    'gam_company_id': gam_company_id,
+                    'company_name': child_network_name,
+                    'delegation_type': delegation_type,
+                    'message': f'MCM invitation sent successfully to {email}',
+                    'child_network_code': child_network_code if child_network_code else None
                 }
                 
-            except AttributeError:
-                # If createChildNetwork doesn't exist, try alternative method
-                # Some GAM versions use different methods
-                # For now, we'll create a placeholder that indicates invitation was initiated
-                logger.warning(f"⚠️ Using alternative method for MCM invitation to {email}")
+            except Exception as fault:
+                fault_txt = str(fault)
+                logger.error(f"❌ GAM API error: {fault_txt}")
                 
-                # Return success but note that manual setup may be required
-                return {
-                    'success': True,
-                    'invitation_id': None,
-                    'message': f'MCM invitation initiated for {email}. Please check GAM dashboard to complete setup.',
-                    'note': 'Child network creation may require manual approval in GAM dashboard'
-                }
+                # Handle duplicate child publisher error (invitation already exists)
+                if "DUPLICATE_CHILD_PUBLISHER" in fault_txt or "UniqueError.NOT_UNIQUE" in fault_txt:
+                    logger.warning("⚠️ Duplicate child publisher - invitation may already exist")
+                    
+                    # Try to get existing child company (by email since child_network_code may not be available)
+                    try:
+                        existing = GAMClientService._get_existing_child(
+                            company_service,
+                            child_network_code=child_network_code,
+                            email=email,
+                            name=child_network_name
+                        )
+                        
+                        if existing:
+                            return {
+                                'success': True,
+                                'duplicate': True,
+                                'gam_company_id': str(existing.get('id', '')),
+                                'company_name': existing.get('name', child_network_name),
+                                'message': 'Child already has an active or pending invitation',
+                                'child_network_code': existing.get('childNetworkCode') if existing else child_network_code
+                            }
+                    except Exception as lookup_error:
+                        logger.warning(f"⚠️ Could not lookup existing child: {str(lookup_error)}")
+                    
+                    return {
+                        'success': True,
+                        'duplicate': True,
+                        'message': 'Child already has an active or pending invitation. Please check GAM dashboard.'
+                    }
+                
+                # Handle other errors
+                if 'already exists' in fault_txt.lower() or 'duplicate' in fault_txt.lower():
+                    error_msg = f'Email {email} already has an MCM invitation.'
+                    if child_network_code:
+                        error_msg += f' Network {child_network_code} may also be in use.'
+                    error_msg += ' Please use a different email or check GAM dashboard.'
+                    return {
+                        'success': False,
+                        'error': error_msg
+                    }
+                elif 'invalid' in fault_txt.lower() or 'not found' in fault_txt.lower():
+                    return {
+                        'success': False,
+                        'error': f'Invalid email or configuration: {fault_txt}'
+                    }
+                elif 'permission' in fault_txt.lower() or 'unauthorized' in fault_txt.lower():
+                    return {
+                        'success': False,
+                        'error': f'Permission denied. Please check GAM API credentials and MCM permissions.'
+                    }
+                else:
+                    return {
+                        'success': False,
+                        'error': f'Failed to send MCM invitation: {fault_txt}'
+                    }
             
         except Exception as e:
             error_msg = str(e)
             logger.error(f"❌ Failed to send MCM invitation to {email}: {error_msg}")
             
-            # Handle specific GAM API errors
-            if 'already exists' in error_msg.lower() or 'duplicate' in error_msg.lower():
-                return {
-                    'success': False,
-                    'error': f'Email {email} already has an AdManager account. Please use a different email.'
-                }
-            elif 'invalid' in error_msg.lower() or 'not found' in error_msg.lower():
-                return {
-                    'success': False,
-                    'error': f'Invalid email or network configuration: {error_msg}'
-                }
-            elif 'permission' in error_msg.lower() or 'unauthorized' in error_msg.lower():
-                return {
-                    'success': False,
-                    'error': f'Permission denied. Please check GAM API credentials and permissions.'
-                }
-            else:
-                return {
-                    'success': False,
-                    'error': f'Failed to send MCM invitation: {error_msg}'
-                }
+            return {
+                'success': False,
+                'error': f'Failed to send MCM invitation: {error_msg}'
+            }
+    
+    @staticmethod
+    def _get_existing_child(company_service, *, child_network_code=None, email=None, name=None):
+        """
+        Helper function to find existing child publisher company
+        (Copied from GAM-Sentinel reference)
+        """
+        from googleads import ad_manager
+        
+        try:
+            statement = ad_manager.StatementBuilder(version="v202511")
+            statement.Where("type = :ctype").WithBindVariable("ctype", "CHILD_PUBLISHER")
+            page = company_service.getCompaniesByStatement(statement.ToStatement())
+            
+            # Handle both dict and object formats
+            results = (getattr(page, "results", None) or page.get("results", []))
+            
+            for company in results:
+                if hasattr(company, "__dict__"):  # suds object
+                    cp = getattr(company, "childPublisher", None) or {}
+                    child_code = getattr(cp, "childNetworkCode", None)
+                    email_value = getattr(company, "email", None)
+                    name_value = getattr(company, "name", None)
+                    company_id = getattr(company, "id", None)
+                else:  # plain dict
+                    cp = company.get("childPublisher", {}) or {}
+                    child_code = cp.get("childNetworkCode")
+                    email_value = company.get("email")
+                    name_value = company.get("name")
+                    company_id = company.get("id")
+                
+                if ((child_network_code and child_code == child_network_code) or
+                    (email and email_value == email) or
+                    (name and name_value == name)):
+                    
+                    # Return dict format for consistent access
+                    return {
+                        "id": company_id,
+                        "name": name_value,
+                        "email": email_value,
+                        "childNetworkCode": child_code
+                    }
+            return None
+        except Exception as e:
+            logger.error(f"❌ Error looking up existing child: {str(e)}")
+            return None
