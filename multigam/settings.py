@@ -18,9 +18,17 @@ if not SECRET_KEY:
     raise ValueError("SECRET_KEY must be set in environment variables for production")
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = config('DEBUG', default=False, cast=bool)
+# Force DEBUG to False for production (can be overridden via env var if needed)
+DEBUG = config('DEBUG', default='False', cast=lambda v: v.lower() in ('true', '1', 'yes'))
 
-ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='api2.hntgaming.me,api.hntgaming.me,localhost,127.0.0.1,publisher.hntgaming.me,*.hntgaming.me').split(',')
+# ALLOWED_HOSTS - explicitly list all allowed hosts (Django doesn't support wildcards)
+# Get from environment variable or use default production hosts
+allowed_hosts_str = config('ALLOWED_HOSTS', default='api2.hntgaming.me,api.hntgaming.me,localhost,127.0.0.1,publisher.hntgaming.me')
+ALLOWED_HOSTS = [host.strip() for host in allowed_hosts_str.split(',') if host.strip()]
+
+# Ensure api2.hntgaming.me is always included
+if 'api2.hntgaming.me' not in ALLOWED_HOSTS:
+    ALLOWED_HOSTS.append('api2.hntgaming.me')
 
 # Application definition
 DJANGO_APPS = [
