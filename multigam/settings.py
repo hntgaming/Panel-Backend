@@ -134,7 +134,7 @@ else:
             'PORT': config('DB_PORT', default='3306'),
             'OPTIONS': {
                 'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
-                'ssl': {'ca': None},  # Disable SSL verification for RDS if needed
+                'ssl': {'ssl_mode': 'PREFERRED'},  # Use SSL for RDS connections
             },
         }
     }
