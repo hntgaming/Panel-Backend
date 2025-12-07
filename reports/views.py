@@ -776,6 +776,9 @@ class UnifiedReportsQueryView(APIView):
         # Simplified for managed inventory - no invitation or parent_network relationships
         queryset = MasterMetaData.objects.all()
         
+        # Exclude Total rows from API responses - frontend calculates its own totals
+        queryset = queryset.exclude(dimension_value__iexact='Total')
+        
         # Role-based filtering
         if not user.is_admin_user:
             # Publisher users see data based on their network_id (as child_network_code)
