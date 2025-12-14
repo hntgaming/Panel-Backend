@@ -447,6 +447,23 @@ class PublicSignupSerializer(serializers.Serializer):
     site_link = serializers.URLField(
         help_text="Website URL"
     )
+    network_id = serializers.CharField(
+        max_length=50,
+        required=False,
+        allow_blank=True,
+        help_text="Optional GAM Network ID. If provided, MCM invitation will be sent to this existing network. Otherwise, a new network will be created."
+    )
+    
+    def validate_network_id(self, value):
+        """Validate network ID format if provided"""
+        if value:
+            value = value.strip()
+            # Network ID should be numeric
+            if not value.isdigit():
+                raise serializers.ValidationError(
+                    "Network ID must be numeric."
+                )
+        return value
     
     def validate_email(self, value):
         """Check if email already exists"""
@@ -477,6 +494,7 @@ class PublicSignupSerializer(serializers.Serializer):
         phone = validated_data['phone']
         email = validated_data['email']
         site_link = validated_data['site_link']
+        network_id = validated_data.get('network_id', '').strip() if validated_data.get('network_id') else None
         
         # Parse name into first_name and last_name
         name_parts = name.strip().split(maxsplit=1)
@@ -496,17 +514,24 @@ class PublicSignupSerializer(serializers.Serializer):
         import secrets
         temp_password = secrets.token_urlsafe(16)
         
-        user = User.objects.create_user(
-            username=username,
-            email=email,
-            first_name=first_name,
-            last_name=last_name,
-            phone_number=phone,
-            site_url=validated_data['site_link'],  # Store original URL with https
-            role=User.UserRole.PUBLISHER,
-            status=StatusChoices.PENDING_APPROVAL,  # Will be activated after password reset
-            password=temp_password
-        )
+        # Create user with network_id if provided
+        user_kwargs = {
+            'username': username,
+            'email': email,
+            'first_name': first_name,
+            'last_name': last_name,
+            'phone_number': phone,
+            'site_url': validated_data['site_link'],  # Store original URL with https
+            'role': User.UserRole.PUBLISHER,
+            'status': StatusChoices.PENDING_APPROVAL,  # Will be activated after password reset
+            'password': temp_password
+        }
+        
+        # Add network_id if provided
+        if network_id:
+            user_kwargs['network_id'] = network_id
+        
+        user = User.objects.create_user(**user_kwargs)
         
         # Create child network name: site link without https + "PubDash"
         # Remove https:// or http://
@@ -524,15 +549,20 @@ class PublicSignupSerializer(serializers.Serializer):
         
         child_network_name = f"{site_name} - PubDash"
         
-        # For managed inventory, we can send MCM invitation without child_network_code or revenue share
-        # The invitation will be sent to the email, and GAM will handle the network code when accepted
-        logger.info(f"🚀 Sending MCM invitation for managed inventory to {email}")
+        # If network_id is provided, use it for the MCM invitation (existing GAM network)
+        # Otherwise, send to new email (GAM will create new network when invitation is accepted)
+        if network_id:
+            logger.info(f"🚀 Sending MCM invitation to existing GAM network {network_id} for {email}")
+        else:
+            logger.info(f"🚀 Sending MCM invitation for new managed inventory network to {email}")
         
-        # Send MCM invitation via GAM API (no child_network_code or revenue share needed for MI)
+        # Send MCM invitation via GAM API
+        # If network_id is provided, use it as child_network_code (existing network)
+        # Otherwise, pass None (new network will be created)
         mcm_result = GAMClientService.send_mcm_invitation(
             email=email,
             child_network_name=child_network_name,
-            child_network_code=None,  # Not required for managed inventory
+            child_network_code=network_id if network_id else None,  # Use network_id if provided
             revenue_share_percentage=None,  # Not required for managed inventory
             delegation_type='MANAGE_INVENTORY'
         )
