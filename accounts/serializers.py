@@ -449,16 +449,15 @@ class PublicSignupSerializer(serializers.Serializer):
     )
     network_id = serializers.CharField(
         max_length=50,
-        required=True,
-        help_text="GAM Network ID. MCM invitation will be sent to this existing network."
+        required=False,
+        allow_blank=True,
+        help_text="GAM Network ID (optional). If provided, MCM invitation will be sent to this existing network."
     )
     
     def validate_network_id(self, value):
         """Validate network ID format"""
-        if not value:
-            raise serializers.ValidationError(
-                "Network ID is required."
-            )
+        if not value or not value.strip():
+            return None  # Allow empty/blank values
         value = value.strip()
         # Network ID should be numeric
         if not value.isdigit():
@@ -496,7 +495,7 @@ class PublicSignupSerializer(serializers.Serializer):
         phone = validated_data['phone']
         email = validated_data['email']
         site_link = validated_data['site_link']
-        network_id = validated_data['network_id'].strip()
+        network_id = validated_data.get('network_id', '').strip() if validated_data.get('network_id') else None
         
         # Parse name into first_name and last_name
         name_parts = name.strip().split(maxsplit=1)
@@ -516,7 +515,7 @@ class PublicSignupSerializer(serializers.Serializer):
         import secrets
         temp_password = secrets.token_urlsafe(16)
         
-        # Create user with network_id
+        # Create user with network_id (if provided)
         user_kwargs = {
             'username': username,
             'email': email,
@@ -527,8 +526,11 @@ class PublicSignupSerializer(serializers.Serializer):
             'role': User.UserRole.PUBLISHER,
             'status': StatusChoices.PENDING_APPROVAL,  # Will be activated after password reset
             'password': temp_password,
-            'network_id': network_id
         }
+        
+        # Only add network_id if provided
+        if network_id:
+            user_kwargs['network_id'] = network_id
         
         user = User.objects.create_user(**user_kwargs)
         
@@ -548,15 +550,20 @@ class PublicSignupSerializer(serializers.Serializer):
         
         child_network_name = f"{site_name} - PubDash"
         
-        # Send MCM invitation to existing GAM network
-        logger.info(f"🚀 Sending MCM invitation to existing GAM network {network_id} for {email}")
+        # Send MCM invitation
+        if network_id:
+            # Send MCM invitation to existing GAM network
+            logger.info(f"🚀 Sending MCM invitation to existing GAM network {network_id} for {email}")
+        else:
+            # Send MCM invitation for new network (GAM will create it)
+            logger.info(f"🚀 Sending MCM invitation for new network to {email}")
         
         # Send MCM invitation via GAM API
-        # Use network_id as child_network_code (existing network)
+        # Use network_id as child_network_code if provided (existing network), otherwise None (new network)
         mcm_result = GAMClientService.send_mcm_invitation(
             email=email,
             child_network_name=child_network_name,
-            child_network_code=network_id,  # Use network_id for existing network
+            child_network_code=network_id,  # None for new network, network_id for existing
             revenue_share_percentage=None,  # Not required for managed inventory
             delegation_type='MANAGE_INVENTORY'
         )
