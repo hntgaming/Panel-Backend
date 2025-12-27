@@ -346,7 +346,7 @@ class PublisherPermissionSerializer(serializers.ModelSerializer):
 class PublisherListSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ['id', 'company_name', 'email', 'status', 'date_joined', 'revenue_share_percentage', 'site_url', 'network_id']
+        fields = ['id', 'company_name', 'email', 'phone_number', 'status', 'date_joined', 'revenue_share_percentage', 'site_url', 'network_id']
 
 
 class PaymentDetailSerializer(serializers.ModelSerializer):
