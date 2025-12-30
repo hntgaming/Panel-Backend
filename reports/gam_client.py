@@ -506,10 +506,25 @@ class GAMClientService:
             if site_id:
                 statement.Where("id = :site_id").WithBindVariable("site_id", int(site_id))
             elif site_url:
-                # Normalize URL for comparison - try multiple variations
-                normalized_url = site_url.rstrip('/')
-                # Try exact match first
-                statement.Where("url = :url").WithBindVariable("url", normalized_url)
+                # Normalize URL to domain only (GAM stores sites as "example.com" without protocol or www)
+                # Extract domain from URL
+                from urllib.parse import urlparse
+                parsed = urlparse(site_url)
+                domain = parsed.netloc or parsed.path.split('/')[0]
+                # Remove www. prefix if present
+                if domain.startswith('www.'):
+                    domain = domain[4:]
+                # Remove trailing slash if any
+                domain = domain.rstrip('/')
+                # Remove port if present
+                if ':' in domain:
+                    domain = domain.split(':')[0]
+                
+                # GAM stores sites as just the domain (e.g., "example.com")
+                normalized_domain = domain
+                
+                # Try matching with the domain format
+                statement.Where("url = :url").WithBindVariable("url", normalized_domain)
             else:
                 return {
                     'success': False,
@@ -528,26 +543,32 @@ class GAMClientService:
                 results = []
             
             if not results or len(results) == 0:
-                # If site not found, try alternative URL formats
+                # If site not found, try alternative domain formats
                 if site_url and not site_id:
-                    # Try with/without trailing slash, with/without protocol
-                    alternative_urls = []
-                    normalized = site_url.rstrip('/')
-                    if normalized.startswith('https://'):
-                        alternative_urls.append(normalized.replace('https://', 'http://'))
-                        alternative_urls.append(normalized.replace('https://', ''))
-                    elif normalized.startswith('http://'):
-                        alternative_urls.append(normalized.replace('http://', 'https://'))
-                        alternative_urls.append(normalized.replace('http://', ''))
-                    else:
-                        alternative_urls.append(f'https://{normalized}')
-                        alternative_urls.append(f'http://{normalized}')
+                    from urllib.parse import urlparse
+                    parsed = urlparse(site_url)
+                    domain = parsed.netloc or parsed.path.split('/')[0]
                     
-                    # Try alternative URLs
-                    for alt_url in alternative_urls:
+                    # Try variations: with www, without www, with protocol, etc.
+                    alternative_domains = []
+                    
+                    # Base domain without www
+                    base_domain = domain.replace('www.', '').rstrip('/')
+                    if ':' in base_domain:
+                        base_domain = base_domain.split(':')[0]
+                    alternative_domains.append(base_domain)
+                    
+                    # With www
+                    if not base_domain.startswith('www.'):
+                        alternative_domains.append(f'www.{base_domain}')
+                    
+                    # Try alternative domain formats
+                    for alt_domain in alternative_domains:
+                        if alt_domain == normalized_domain:  # Skip if already tried
+                            continue
                         try:
                             alt_statement = ad_manager.StatementBuilder(version="v202511")
-                            alt_statement.Where("url = :url").WithBindVariable("url", alt_url)
+                            alt_statement.Where("url = :url").WithBindVariable("url", alt_domain)
                             alt_page = site_service.getSitesByStatement(alt_statement.ToStatement())
                             
                             if hasattr(alt_page, "results"):
@@ -559,8 +580,10 @@ class GAMClientService:
                             
                             if alt_results and len(alt_results) > 0:
                                 results = alt_results
+                                logger.info(f"✅ Found site in GAM with alternative domain format: {alt_domain}")
                                 break
-                        except:
+                        except Exception as e:
+                            logger.debug(f"Tried alternative domain {alt_domain}: {str(e)}")
                             continue
                 
                 # If still not found, return error but don't set status to needs_attention
@@ -568,7 +591,7 @@ class GAMClientService:
                 if not results or len(results) == 0:
                     return {
                         'success': False,
-                        'error': 'Site not found in GAM',
+                        'error': f'Site not found in GAM (searched for: {normalized_domain})',
                         'status': None  # Don't force status change
                     }
             
