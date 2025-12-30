@@ -1031,6 +1031,49 @@ def sync_sites_status_view(request):
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
+def check_ads_txt_view(request):
+    """
+    Check ads.txt files for all sites
+    Admin only
+    """
+    if not request.user.is_admin_user:
+        return Response(
+            {'error': 'Only admin users can check ads.txt files'},
+            status=status.HTTP_403_FORBIDDEN
+        )
+    
+    try:
+        from accounts.ads_txt_checker import AdsTxtChecker
+        
+        # Check ads.txt for all sites
+        result = AdsTxtChecker.check_all_sites()
+        
+        if not result.get('success'):
+            return Response({
+                'success': False,
+                'error': result.get('error', 'Failed to check ads.txt files')
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+        return Response({
+            'success': True,
+            'message': f'Checked {result.get("checked", 0)} sites',
+            'checked': result.get('checked', 0),
+            'found': result.get('found', 0),
+            'missing': result.get('missing', 0),
+            'errors': result.get('errors', 0),
+            'total': result.get('total', 0)
+        })
+        
+    except Exception as e:
+        logger.error(f"❌ Error checking ads.txt files: {str(e)}")
+        return Response({
+            'success': False,
+            'error': f'Failed to check ads.txt files: {str(e)}'
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
 def fetch_missing_network_ids_view(request):
     """
     Fetch network IDs from GAM for publishers where network_id is missing
