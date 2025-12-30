@@ -331,22 +331,33 @@ class GAMClientService:
                     domain = domain[4:]
                 site_name = domain
             
-            # Normalize site URL (ensure it has protocol)
-            normalized_url = site_url
-            if not normalized_url.startswith('http://') and not normalized_url.startswith('https://'):
-                normalized_url = f'https://{normalized_url}'
+            # Normalize site URL to domain format (GAM stores sites as "example.com" without protocol or www)
+            from urllib.parse import urlparse
+            parsed = urlparse(site_url)
+            domain = parsed.netloc or parsed.path.split('/')[0]
             
-            # Remove trailing slash for consistency
-            normalized_url = normalized_url.rstrip('/')
+            # Remove www. prefix if present
+            if domain.startswith('www.'):
+                domain = domain[4:]
+            
+            # Remove trailing slash if any
+            domain = domain.rstrip('/')
+            
+            # Remove port if present
+            if ':' in domain:
+                domain = domain.split(':')[0]
+            
+            # GAM stores sites as just the domain (e.g., "example.com")
+            normalized_domain = domain
             
             # Build site structure
             # Note: Sites in parent network cannot directly set childNetworkCode
             # The association happens through MCM relationship after invitation acceptance
             site = {
-                "url": normalized_url,
+                "url": normalized_domain,
             }
             
-            logger.info(f"🚀 Adding site to parent GAM network: {normalized_url}")
+            logger.info(f"🚀 Adding site to parent GAM network: {normalized_domain}")
             if child_network_code:
                 logger.info(f"   Will be associated with child network after MCM acceptance: {child_network_code}")
             
@@ -362,15 +373,15 @@ class GAMClientService:
                 elif isinstance(created_site, dict):
                     site_id = str(created_site.get('id', ''))
                 
-                logger.info(f"✅ Site added successfully: {normalized_url}")
+                logger.info(f"✅ Site added successfully: {normalized_domain}")
                 logger.info(f"   GAM Site ID: {site_id}")
                 
                 return {
                     'success': True,
                     'site_id': site_id,
-                    'site_url': normalized_url,
+                    'site_url': normalized_domain,  # Return domain format
                     'site_name': site_name,
-                    'message': f'Site {normalized_url} added successfully to parent GAM network',
+                    'message': f'Site {normalized_domain} added successfully to parent GAM network',
                     'child_network_code': child_network_code if child_network_code else None
                 }
                 
@@ -386,7 +397,7 @@ class GAMClientService:
                     try:
                         existing = GAMClientService._get_existing_site(
                             site_service,
-                            site_url=normalized_url
+                            site_url=normalized_domain
                         )
                         
                         if existing:
