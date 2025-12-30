@@ -630,9 +630,9 @@ class PublicSignupSerializer(serializers.Serializer):
         site = Site.objects.create(
             publisher=user,
             url=validated_data['site_link'],
-            gam_status=Site.GamStatus.ADDED if site_result.get('success') else Site.GamStatus.FAILED,
+            gam_status=Site.GamStatus.GETTING_READY if site_result.get('success') else Site.GamStatus.NEEDS_ATTENTION,
             gam_site_id=site_result.get('site_id') if site_result.get('success') else None,
-            ads_txt_status=Site.AdsTxtStatus.NOT_VERIFIED
+            ads_txt_status=Site.AdsTxtStatus.MISSING
         )
         logger.info(f"✅ Site record created: {site.id} for {user.email}")
         

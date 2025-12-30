@@ -475,16 +475,14 @@ class Site(TimeStampedModel):
     Site model to track publisher sites with GAM and ads.txt status
     """
     class GamStatus(models.TextChoices):
-        PENDING = 'pending', 'Pending'
-        ADDED = 'added', 'Added to GAM'
-        FAILED = 'failed', 'Failed to Add'
-        NOT_ADDED = 'not_added', 'Not Added'
+        READY = 'ready', 'Ready'
+        GETTING_READY = 'getting_ready', 'Getting ready'
+        REQUIRES_REVIEW = 'requires_review', 'Requires review'
+        NEEDS_ATTENTION = 'needs_attention', 'Needs attention'
     
     class AdsTxtStatus(models.TextChoices):
-        NOT_VERIFIED = 'not_verified', 'Not Verified'
-        VERIFIED = 'verified', 'Verified'
-        INVALID = 'invalid', 'Invalid'
-        PENDING = 'pending', 'Pending Verification'
+        ADDED = 'added', 'Added'
+        MISSING = 'missing', 'Missing'
     
     publisher = models.ForeignKey(
         User,
@@ -501,7 +499,7 @@ class Site(TimeStampedModel):
     gam_status = models.CharField(
         max_length=20,
         choices=GamStatus.choices,
-        default=GamStatus.NOT_ADDED,
+        default=GamStatus.GETTING_READY,
         help_text="Status of site in GAM"
     )
     
@@ -515,8 +513,8 @@ class Site(TimeStampedModel):
     ads_txt_status = models.CharField(
         max_length=20,
         choices=AdsTxtStatus.choices,
-        default=AdsTxtStatus.NOT_VERIFIED,
-        help_text="Status of ads.txt verification"
+        default=AdsTxtStatus.MISSING,
+        help_text="Status of ads.txt"
     )
     
     ads_txt_last_checked = models.DateTimeField(
