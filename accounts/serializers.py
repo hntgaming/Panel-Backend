@@ -534,21 +534,8 @@ class PublicSignupSerializer(serializers.Serializer):
         
         user = User.objects.create_user(**user_kwargs)
         
-        # Create child network name: site link without https + "PubDash"
-        # Remove https:// or http://
-        site_name = validated_data['site_link']
-        if site_name.startswith('https://'):
-            site_name = site_name[8:]
-        elif site_name.startswith('http://'):
-            site_name = site_name[7:]
-        # Remove trailing slash
-        if site_name.endswith('/'):
-            site_name = site_name[:-1]
-        # Remove www. if present
-        if site_name.startswith('www.'):
-            site_name = site_name[4:]
-        
-        child_network_name = f"{site_name} - PubDash"
+        # Create child network name: use full name from form
+        child_network_name = name.strip()
         
         # Send MCM invitation
         if network_id:
