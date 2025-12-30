@@ -450,13 +450,29 @@ class GAMClientService:
         Helper function to find existing site by URL
         """
         from googleads import ad_manager
+        from urllib.parse import urlparse
         
         try:
             statement = ad_manager.StatementBuilder(version="v202511")
             if site_url:
-                # Normalize URL for comparison
-                normalized_url = site_url.rstrip('/')
-                statement.Where("url = :url").WithBindVariable("url", normalized_url)
+                # Normalize to domain format (GAM stores as "example.com")
+                parsed = urlparse(site_url) if '://' in site_url else None
+                if parsed:
+                    domain = parsed.netloc or parsed.path.split('/')[0]
+                else:
+                    domain = site_url
+                
+                # Remove www. prefix if present
+                if domain.startswith('www.'):
+                    domain = domain[4:]
+                
+                # Remove trailing slash and port
+                domain = domain.rstrip('/')
+                if ':' in domain:
+                    domain = domain.split(':')[0]
+                
+                normalized_domain = domain
+                statement.Where("url = :url").WithBindVariable("url", normalized_domain)
             
             page = site_service.getSitesByStatement(statement.ToStatement())
             
