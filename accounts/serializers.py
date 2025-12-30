@@ -528,6 +528,7 @@ class PublicSignupSerializer(serializers.Serializer):
             'role': User.UserRole.PUBLISHER,
             'status': StatusChoices.PENDING_APPROVAL,  # Will be activated after password reset
             'password': temp_password,
+            'revenue_share_percentage': 20.00,  # 80% to publisher, 20% to parent
         }
         
         # Only add network_id if provided
