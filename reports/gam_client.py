@@ -506,8 +506,9 @@ class GAMClientService:
             if site_id:
                 statement.Where("id = :site_id").WithBindVariable("site_id", int(site_id))
             elif site_url:
-                # Normalize URL for comparison
+                # Normalize URL for comparison - try multiple variations
                 normalized_url = site_url.rstrip('/')
+                # Try exact match first
                 statement.Where("url = :url").WithBindVariable("url", normalized_url)
             else:
                 return {
@@ -527,11 +528,49 @@ class GAMClientService:
                 results = []
             
             if not results or len(results) == 0:
-                return {
-                    'success': False,
-                    'error': 'Site not found in GAM',
-                    'status': 'needs_attention'
-                }
+                # If site not found, try alternative URL formats
+                if site_url and not site_id:
+                    # Try with/without trailing slash, with/without protocol
+                    alternative_urls = []
+                    normalized = site_url.rstrip('/')
+                    if normalized.startswith('https://'):
+                        alternative_urls.append(normalized.replace('https://', 'http://'))
+                        alternative_urls.append(normalized.replace('https://', ''))
+                    elif normalized.startswith('http://'):
+                        alternative_urls.append(normalized.replace('http://', 'https://'))
+                        alternative_urls.append(normalized.replace('http://', ''))
+                    else:
+                        alternative_urls.append(f'https://{normalized}')
+                        alternative_urls.append(f'http://{normalized}')
+                    
+                    # Try alternative URLs
+                    for alt_url in alternative_urls:
+                        try:
+                            alt_statement = ad_manager.StatementBuilder(version="v202511")
+                            alt_statement.Where("url = :url").WithBindVariable("url", alt_url)
+                            alt_page = site_service.getSitesByStatement(alt_statement.ToStatement())
+                            
+                            if hasattr(alt_page, "results"):
+                                alt_results = alt_page.results
+                            elif isinstance(alt_page, dict):
+                                alt_results = alt_page.get("results", [])
+                            else:
+                                alt_results = []
+                            
+                            if alt_results and len(alt_results) > 0:
+                                results = alt_results
+                                break
+                        except:
+                            continue
+                
+                # If still not found, return error but don't set status to needs_attention
+                # Let the caller decide what to do
+                if not results or len(results) == 0:
+                    return {
+                        'success': False,
+                        'error': 'Site not found in GAM',
+                        'status': None  # Don't force status change
+                    }
             
             site = results[0]
             
@@ -608,17 +647,28 @@ class GAMClientService:
                     
                     if result.get('success'):
                         # Update site status
-                        site.gam_status = result.get('status', site.gam_status)
+                        new_status = result.get('status')
+                        if new_status:
+                            site.gam_status = new_status
                         if result.get('site_id') and not site.gam_site_id:
                             site.gam_site_id = result.get('site_id')
                         site.save(update_fields=['gam_status', 'gam_site_id'])
                         synced_count += 1
                         logger.info(f"✅ Synced site {site.url}: {site.gam_status}")
                     else:
-                        # If site not found in GAM, mark as needs_attention
-                        if 'not found' in result.get('error', '').lower():
-                            site.gam_status = Site.GamStatus.NEEDS_ATTENTION
-                            site.save(update_fields=['gam_status'])
+                        # If site not found in GAM, only update if it was previously marked as added
+                        # Otherwise, preserve the existing status (might be getting_ready from signup)
+                        error_msg = result.get('error', '').lower()
+                        if 'not found' in error_msg:
+                            # Only mark as needs_attention if it was previously marked as added or ready
+                            # If it's still getting_ready, keep it as getting_ready (might be pending GAM processing)
+                            if site.gam_status in [Site.GamStatus.ADDED, Site.GamStatus.READY]:
+                                site.gam_status = Site.GamStatus.NEEDS_ATTENTION
+                                site.save(update_fields=['gam_status'])
+                                logger.warning(f"⚠️ Site {site.url} was marked as added/ready but not found in GAM, marking as needs_attention")
+                            else:
+                                # Keep existing status (probably getting_ready)
+                                logger.info(f"ℹ️ Site {site.url} not found in GAM, keeping status: {site.gam_status}")
                         error_count += 1
                         logger.warning(f"⚠️ Failed to sync site {site.url}: {result.get('error')}")
                         
