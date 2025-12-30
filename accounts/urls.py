@@ -54,4 +54,7 @@ urlpatterns = [
     path('payment-details/all/', views.PaymentDetailListView.as_view(), name='payment_details_list'),  # GET all (admin)
     path('payment-details/<int:pk>/', views.PaymentDetailDetailView.as_view(), name='payment_detail_detail'),  # GET specific (admin)
 
+    # Sites management endpoints
+    path('sites/', views.SiteListView.as_view(), name='site_list'),  # GET all sites (admin sees all, publisher sees own)
+
 ]

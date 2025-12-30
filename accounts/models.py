@@ -80,6 +80,10 @@ class User(AbstractUser, TimeStampedModel):
         """Return the full name of the user"""
         return f"{self.first_name} {self.last_name}".strip()
     
+    def get_sites(self):
+        """Get all sites for this publisher"""
+        return self.sites.all()
+    
     @property
     def is_active_user(self):
         """Check if user is active"""
@@ -464,3 +468,74 @@ class PaymentDetail(TimeStampedModel):
                     field: f'{field.replace("_", " ").title()} is required for wire transfer'
                     for field in missing_fields
                 })
+
+
+class Site(TimeStampedModel):
+    """
+    Site model to track publisher sites with GAM and ads.txt status
+    """
+    class GamStatus(models.TextChoices):
+        PENDING = 'pending', 'Pending'
+        ADDED = 'added', 'Added to GAM'
+        FAILED = 'failed', 'Failed to Add'
+        NOT_ADDED = 'not_added', 'Not Added'
+    
+    class AdsTxtStatus(models.TextChoices):
+        NOT_VERIFIED = 'not_verified', 'Not Verified'
+        VERIFIED = 'verified', 'Verified'
+        INVALID = 'invalid', 'Invalid'
+        PENDING = 'pending', 'Pending Verification'
+    
+    publisher = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='sites',
+        limit_choices_to={'role': 'publisher'},
+        help_text="Publisher who owns this site"
+    )
+    
+    url = models.URLField(
+        help_text="Site URL (e.g., https://example.com)"
+    )
+    
+    gam_status = models.CharField(
+        max_length=20,
+        choices=GamStatus.choices,
+        default=GamStatus.NOT_ADDED,
+        help_text="Status of site in GAM"
+    )
+    
+    gam_site_id = models.CharField(
+        max_length=50,
+        blank=True,
+        null=True,
+        help_text="GAM Site ID if added to GAM"
+    )
+    
+    ads_txt_status = models.CharField(
+        max_length=20,
+        choices=AdsTxtStatus.choices,
+        default=AdsTxtStatus.NOT_VERIFIED,
+        help_text="Status of ads.txt verification"
+    )
+    
+    ads_txt_last_checked = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Last time ads.txt was checked"
+    )
+    
+    notes = models.TextField(
+        blank=True,
+        help_text="Additional notes about the site"
+    )
+    
+    class Meta:
+        db_table = 'accounts_site'
+        verbose_name = 'Site'
+        verbose_name_plural = 'Sites'
+        unique_together = [['publisher', 'url']]
+        ordering = ['-created_at']
+    
+    def __str__(self):
+        return f"{self.url} ({self.publisher.email})"

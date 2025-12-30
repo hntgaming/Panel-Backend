@@ -20,7 +20,7 @@ from django.conf import settings
 from core.models import StatusChoices
 # Removed gam_accounts dependencies
 
-from .models import PublisherPermission, User
+from .models import PublisherPermission, User, Site
 
 logger = logging.getLogger(__name__)
 DEBUG = settings.DEBUG
@@ -31,7 +31,8 @@ from .serializers import (
     UserLoginSerializer,
     UserProfileSerializer,
     UserRoleUpdateSerializer,
-    ChangePasswordSerializer
+    ChangePasswordSerializer,
+    SiteSerializer
 )
 
 
@@ -937,3 +938,21 @@ class PaymentDetailDetailView(generics.RetrieveAPIView):
         if not self.request.user.is_admin_user:
             return PaymentDetail.objects.none()
         return PaymentDetail.objects.select_related('user').all()
+
+
+class SiteListView(generics.ListAPIView):
+    """
+    GET all sites
+    - Admin: sees all sites
+    - Publisher: sees only their own sites
+    """
+    permission_classes = [IsAuthenticated]
+    serializer_class = SiteSerializer
+    
+    def get_queryset(self):
+        if self.request.user.is_admin_user:
+            # Admin sees all sites
+            return Site.objects.select_related('publisher').all()
+        else:
+            # Publisher sees only their own sites
+            return Site.objects.filter(publisher=self.request.user).select_related('publisher')

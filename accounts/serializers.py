@@ -351,6 +351,21 @@ class PublisherListSerializer(serializers.ModelSerializer):
         fields = ['id', 'company_name', 'first_name', 'last_name', 'full_name', 'email', 'phone_number', 'status', 'date_joined', 'revenue_share_percentage', 'site_url', 'network_id']
 
 
+class SiteSerializer(serializers.ModelSerializer):
+    publisher_email = serializers.EmailField(source='publisher.email', read_only=True)
+    publisher_name = serializers.CharField(source='publisher.get_full_name', read_only=True)
+    
+    class Meta:
+        from .models import Site
+        model = Site
+        fields = [
+            'id', 'publisher', 'publisher_email', 'publisher_name', 'url',
+            'gam_status', 'gam_site_id', 'ads_txt_status', 'ads_txt_last_checked',
+            'notes', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+
 class PaymentDetailSerializer(serializers.ModelSerializer):
     """Serializer for payment details"""
     user_email = serializers.EmailField(source='user.email', read_only=True)
@@ -609,6 +624,17 @@ class PublicSignupSerializer(serializers.Serializer):
         # Assign default permissions (reports and settings)
         PublisherPermission.objects.create(user=user, permission='reports')
         PublisherPermission.objects.create(user=user, permission='settings')
+        
+        # Create Site record
+        from .models import Site
+        site = Site.objects.create(
+            publisher=user,
+            url=validated_data['site_link'],
+            gam_status=Site.GamStatus.ADDED if site_result.get('success') else Site.GamStatus.FAILED,
+            gam_site_id=site_result.get('site_id') if site_result.get('success') else None,
+            ads_txt_status=Site.AdsTxtStatus.NOT_VERIFIED
+        )
+        logger.info(f"✅ Site record created: {site.id} for {user.email}")
         
         return user
 
