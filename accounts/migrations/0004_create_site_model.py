@@ -32,8 +32,8 @@ class Migration(migrations.Migration):
                 'ordering': ['-created_at'],
             },
         ),
-        migrations.AddConstraint(
-            model_name='site',
-            constraint=models.UniqueConstraint(fields=['publisher', 'url'], name='unique_publisher_site'),
+        migrations.AlterUniqueTogether(
+            name='site',
+            unique_together={('publisher', 'url')},
         ),
     ]
