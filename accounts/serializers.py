@@ -578,6 +578,31 @@ class PublicSignupSerializer(serializers.Serializer):
             # Don't raise exception - allow user creation to proceed
             # Admin can manually send invitation later
         
+        # Add site to parent GAM network
+        # Extract domain from site_link for site name
+        site_name = validated_data['site_link']
+        if site_name.startswith('https://'):
+            site_name = site_name[8:]
+        elif site_name.startswith('http://'):
+            site_name = site_name[7:]
+        if site_name.endswith('/'):
+            site_name = site_name[:-1]
+        if site_name.startswith('www.'):
+            site_name = site_name[4:]
+        
+        site_result = GAMClientService.add_site_to_parent_network(
+            site_url=validated_data['site_link'],
+            site_name=site_name,
+            child_network_code=network_id if network_id else None
+        )
+        
+        if not site_result.get('success'):
+            # If site addition fails, log but don't fail user creation
+            logger.warning(f"⚠️ Site could not be added to GAM: {site_result.get('error')}")
+            logger.info("   Site can be added manually later via GAM dashboard")
+        else:
+            logger.info(f"✅ Site added to parent GAM network: {site_result.get('site_url')}")
+        
         # Send welcome email with password reset link
         send_welcome_email_with_reset_link(user)
         

@@ -293,3 +293,183 @@ class GAMClientService:
         except Exception as e:
             logger.error(f"❌ Error looking up existing child: {str(e)}")
             return None
+    
+    @staticmethod
+    def add_site_to_parent_network(site_url, site_name=None, child_network_code=None):
+        """
+        Add a child publisher's site to the parent GAM network via API
+        
+        Args:
+            site_url: The site URL (e.g., "https://example.com")
+            site_name: Optional site name (defaults to domain from URL)
+            child_network_code: Optional child network code to associate with the site
+        
+        Returns:
+            dict: {'success': bool, 'site_id': str or None, 'error': str or None}
+        """
+        try:
+            from decouple import config
+            from googleads import ad_manager
+            
+            # Get parent network code
+            parent_network_code = config('GAM_PARENT_NETWORK_CODE', default='23310681755')
+            
+            # Get GAM client using parent network YAML
+            client = GAMClientService.get_googleads_client(parent_network_code)
+            
+            # Use SiteService to create sites
+            site_service = client.GetService("SiteService", version="v202511")
+            
+            # Extract domain from URL for site name if not provided
+            if not site_name:
+                # Remove protocol
+                domain = site_url.replace('https://', '').replace('http://', '')
+                # Remove trailing slash
+                domain = domain.rstrip('/')
+                # Remove www. if present
+                if domain.startswith('www.'):
+                    domain = domain[4:]
+                site_name = domain
+            
+            # Normalize site URL (ensure it has protocol)
+            normalized_url = site_url
+            if not normalized_url.startswith('http://') and not normalized_url.startswith('https://'):
+                normalized_url = f'https://{normalized_url}'
+            
+            # Remove trailing slash for consistency
+            normalized_url = normalized_url.rstrip('/')
+            
+            # Build site structure
+            # Note: Sites in parent network cannot directly set childNetworkCode
+            # The association happens through MCM relationship after invitation acceptance
+            site = {
+                "url": normalized_url,
+            }
+            
+            logger.info(f"🚀 Adding site to parent GAM network: {normalized_url}")
+            if child_network_code:
+                logger.info(f"   Will be associated with child network after MCM acceptance: {child_network_code}")
+            
+            try:
+                # Create site(s)
+                created_sites = site_service.createSites([site])
+                created_site = created_sites[0]
+                
+                # Extract site ID (handle both dict and object formats)
+                site_id = None
+                if hasattr(created_site, 'id'):
+                    site_id = str(created_site.id)
+                elif isinstance(created_site, dict):
+                    site_id = str(created_site.get('id', ''))
+                
+                logger.info(f"✅ Site added successfully: {normalized_url}")
+                logger.info(f"   GAM Site ID: {site_id}")
+                
+                return {
+                    'success': True,
+                    'site_id': site_id,
+                    'site_url': normalized_url,
+                    'site_name': site_name,
+                    'message': f'Site {normalized_url} added successfully to parent GAM network',
+                    'child_network_code': child_network_code if child_network_code else None
+                }
+                
+            except Exception as fault:
+                fault_txt = str(fault)
+                logger.error(f"❌ GAM API error adding site: {fault_txt}")
+                
+                # Handle duplicate site error
+                if "DUPLICATE" in fault_txt.upper() or "already exists" in fault_txt.lower():
+                    logger.warning("⚠️ Site may already exist in GAM")
+                    
+                    # Try to find existing site
+                    try:
+                        existing = GAMClientService._get_existing_site(
+                            site_service,
+                            site_url=normalized_url
+                        )
+                        
+                        if existing:
+                            return {
+                                'success': True,
+                                'duplicate': True,
+                                'site_id': str(existing.get('id', '')),
+                                'site_url': existing.get('url', normalized_url),
+                                'message': 'Site already exists in GAM network',
+                                'child_network_code': existing.get('childNetworkCode') if existing else child_network_code
+                            }
+                    except Exception as lookup_error:
+                        logger.warning(f"⚠️ Could not lookup existing site: {str(lookup_error)}")
+                    
+                    return {
+                        'success': True,
+                        'duplicate': True,
+                        'message': 'Site already exists in GAM network. Please check GAM dashboard.'
+                    }
+                
+                # Handle other errors
+                if 'invalid' in fault_txt.lower() or 'not found' in fault_txt.lower():
+                    return {
+                        'success': False,
+                        'error': f'Invalid site URL or configuration: {fault_txt}'
+                    }
+                elif 'permission' in fault_txt.lower() or 'unauthorized' in fault_txt.lower():
+                    return {
+                        'success': False,
+                        'error': f'Permission denied. Please check GAM API credentials and site management permissions.'
+                    }
+                else:
+                    return {
+                        'success': False,
+                        'error': f'Failed to add site: {fault_txt}'
+                    }
+            
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"❌ Failed to add site {site_url}: {error_msg}")
+            
+            return {
+                'success': False,
+                'error': f'Failed to add site: {error_msg}'
+            }
+    
+    @staticmethod
+    def _get_existing_site(site_service, *, site_url=None):
+        """
+        Helper function to find existing site by URL
+        """
+        from googleads import ad_manager
+        
+        try:
+            statement = ad_manager.StatementBuilder(version="v202511")
+            if site_url:
+                # Normalize URL for comparison
+                normalized_url = site_url.rstrip('/')
+                statement.Where("url = :url").WithBindVariable("url", normalized_url)
+            
+            page = site_service.getSitesByStatement(statement.ToStatement())
+            
+            # Handle both dict and object formats
+            results = (getattr(page, "results", None) or page.get("results", []))
+            
+            if results and len(results) > 0:
+                site = results[0]
+                
+                # Return dict format for consistent access
+                if hasattr(site, "__dict__"):  # suds object
+                    return {
+                        "id": getattr(site, "id", None),
+                        "url": getattr(site, "url", None),
+                        "childNetworkCode": getattr(getattr(site, "childNetworkCode", None), "value", None) if hasattr(site, "childNetworkCode") else None
+                    }
+                else:  # plain dict
+                    return {
+                        "id": site.get("id"),
+                        "url": site.get("url"),
+                        "childNetworkCode": site.get("childNetworkCode")
+                    }
+            
+            return None
+        except Exception as e:
+            logger.error(f"❌ Error looking up existing site: {str(e)}")
+            return None
