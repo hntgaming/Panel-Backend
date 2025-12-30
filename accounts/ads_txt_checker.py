@@ -88,9 +88,23 @@ class AdsTxtChecker:
             if response.status_code == 200:
                 content = response.text.strip()
                 
-                # Basic validation: check if it looks like an ads.txt file
-                # ads.txt should contain lines with domain, publisher ID, relationship type
-                is_valid = AdsTxtChecker.validate_ads_txt_content(content)
+                # Validate ads.txt content against required entries
+                validation = AdsTxtChecker.validate_ads_txt_content(content, site_url)
+                is_valid = validation.get('is_valid', False)
+                
+                # Build error message if invalid
+                error_msg = None
+                if not is_valid:
+                    error_parts = []
+                    if not validation.get('has_owner_domain'):
+                        error_parts.append('Missing OWNERDOMAIN')
+                    if not validation.get('has_manager_domain'):
+                        error_parts.append('Missing or invalid MANAGERDOMAIN')
+                    if validation.get('missing_entries'):
+                        error_parts.append(f"Missing entries: {', '.join(validation['missing_entries'][:2])}")
+                    if validation.get('errors'):
+                        error_parts.extend(validation['errors'][:2])
+                    error_msg = '; '.join(error_parts) if error_parts else 'Invalid ads.txt content'
                 
                 return {
                     'success': True,
@@ -98,8 +112,9 @@ class AdsTxtChecker:
                     'status': 'added' if is_valid else 'missing',  # If invalid, treat as missing
                     'url': ads_txt_url,
                     'content': content if is_valid else None,
-                    'error': None if is_valid else 'Invalid ads.txt content',
-                    'status_code': response.status_code
+                    'error': error_msg,
+                    'status_code': response.status_code,
+                    'validation': validation
                 }
             else:
                 # ads.txt not found or server error
@@ -147,41 +162,118 @@ class AdsTxtChecker:
             }
     
     @staticmethod
-    def validate_ads_txt_content(content):
+    def validate_ads_txt_content(content, site_url=None):
         """
-        Basic validation of ads.txt content
+        Validate ads.txt content against required entries
         
         Args:
             content: The content of the ads.txt file
+            site_url: The site URL to extract domain for OWNERDOMAIN validation
         
         Returns:
-            bool: True if content looks valid
+            dict: {
+                'is_valid': bool,
+                'has_owner_domain': bool,
+                'has_manager_domain': bool,
+                'has_required_entries': bool,
+                'missing_entries': list,
+                'errors': list
+            }
         """
         if not content or len(content.strip()) == 0:
-            return False
+            return {
+                'is_valid': False,
+                'has_owner_domain': False,
+                'has_manager_domain': False,
+                'has_required_entries': False,
+                'missing_entries': ['ads.txt file is empty'],
+                'errors': ['Empty file']
+            }
         
         lines = content.strip().split('\n')
-        valid_lines = 0
+        
+        # Required entries that must be present
+        required_entries = [
+            'ehumps.com, 23310681755, DIRECT',
+            'google.com, pub-6193096344573365, DIRECT, f08c47fec0942fa0',
+            'google.com, pub-6193096344573365, RESELLER, f08c47fec0942fa0'
+        ]
+        
+        # Extract domain from site_url for OWNERDOMAIN validation
+        owner_domain = None
+        if site_url:
+            try:
+                from urllib.parse import urlparse
+                parsed = urlparse(site_url)
+                owner_domain = parsed.netloc.replace('www.', '').lower()
+            except:
+                pass
+        
+        has_owner_domain = False
+        has_manager_domain = False
+        found_entries = []
+        missing_entries = required_entries.copy()
+        errors = []
         
         for line in lines:
             line = line.strip()
             
-            # Skip empty lines and comments
-            if not line or line.startswith('#'):
+            # Skip empty lines
+            if not line:
                 continue
             
-            # Basic format check: should have at least domain and publisher ID
-            # Format: example.com, pub-123456789, DIRECT, f08c47fec0942fa0
-            parts = [p.strip() for p in line.split(',')]
+            # Check for OWNERDOMAIN
+            if line.startswith('OWNERDOMAIN='):
+                has_owner_domain = True
+                if owner_domain:
+                    # Validate OWNERDOMAIN matches site domain
+                    domain_value = line.split('=', 1)[1].strip().lower()
+                    domain_value = domain_value.replace('www.', '').replace('https://', '').replace('http://', '').split('/')[0]
+                    if domain_value != owner_domain:
+                        errors.append(f'OWNERDOMAIN mismatch: expected {owner_domain}, found {domain_value}')
+                continue
             
-            if len(parts) >= 2:
-                # Check if first part looks like a domain
-                domain = parts[0]
-                if '.' in domain and len(domain) > 3:
-                    valid_lines += 1
+            # Check for MANAGERDOMAIN
+            if line.startswith('MANAGERDOMAIN='):
+                manager_value = line.split('=', 1)[1].strip().lower()
+                if manager_value == 'ehumps.com':
+                    has_manager_domain = True
+                else:
+                    errors.append(f'MANAGERDOMAIN should be "ehumps.com", found "{manager_value}"')
+                continue
+            
+            # Skip comments
+            if line.startswith('#'):
+                continue
+            
+            # Check for required entries (normalize for comparison)
+            line_normalized = ','.join([p.strip() for p in line.split(',')[:3]])  # First 3 parts: domain, id, type
+            
+            for req_entry in required_entries:
+                req_normalized = ','.join([p.strip() for p in req_entry.split(',')[:3]])
+                if req_normalized in line_normalized or line_normalized in req_normalized:
+                    if req_entry in missing_entries:
+                        missing_entries.remove(req_entry)
+                        found_entries.append(req_entry)
+                    break
         
-        # Consider valid if at least one valid line exists
-        return valid_lines > 0
+        # Determine if valid
+        is_valid = (
+            has_owner_domain and
+            has_manager_domain and
+            len(missing_entries) == 0 and
+            len(errors) == 0
+        )
+        
+        return {
+            'is_valid': is_valid,
+            'has_owner_domain': has_owner_domain,
+            'has_manager_domain': has_manager_domain,
+            'has_required_entries': len(missing_entries) == 0,
+            'found_entries': found_entries,
+            'missing_entries': missing_entries,
+            'errors': errors
+        }
     
     @staticmethod
     def check_all_sites():

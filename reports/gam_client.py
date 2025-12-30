@@ -517,7 +517,14 @@ class GAMClientService:
             
             # Get sites
             page = site_service.getSitesByStatement(statement.ToStatement())
-            results = (getattr(page, "results", None) or page.get("results", []))
+            
+            # Handle both dict and object formats for page
+            if hasattr(page, "results"):
+                results = page.results
+            elif isinstance(page, dict):
+                results = page.get("results", [])
+            else:
+                results = []
             
             if not results or len(results) == 0:
                 return {
