@@ -701,6 +701,7 @@ class GAMClientService:
                                 logger.warning(f"⚠️ Site {site.url} was marked as added/ready but not found in GAM, marking as needs_attention")
                             else:
                                 # Keep existing status (probably getting_ready)
+                                pass
                         error_count += 1
                         logger.warning(f"⚠️ Failed to sync site {site.url}: {result.get('error')}")
                         
