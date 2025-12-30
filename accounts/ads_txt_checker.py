@@ -314,10 +314,10 @@ class AdsTxtChecker:
                     
                     if result.get('exists'):
                         found_count += 1
-                        logger.info(f"✅ ads.txt found for {site.url}")
+                        logger.debug(f"ads.txt found for {site.url}")
                     else:
                         missing_count += 1
-                        logger.info(f"⚠️ ads.txt missing for {site.url}: {result.get('error')}")
+                        logger.debug(f"ads.txt missing for {site.url}: {result.get('error')}")
                         
                 except Exception as e:
                     error_count += 1

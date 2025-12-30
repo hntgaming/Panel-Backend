@@ -106,7 +106,7 @@ class GAMReportService:
             is_manual=triggered_by is not None
         )
         
-        logger.info(f"🚀 Starting GAM report sync {sync_id} for {date_from} to {date_to}")
+        logger.info(f"Starting GAM report sync {sync_id} for {date_from} to {date_to}")
         
         try:
             # Get eligible publishers with active status and network_id
@@ -118,7 +118,6 @@ class GAMReportService:
                 network_id__isnull=False
             ).exclude(network_id='')
             
-            logger.info(f"📊 Found {eligible_publishers.count()} eligible publishers")
             
             successful_count = 0
             failed_count = 0
@@ -128,7 +127,6 @@ class GAMReportService:
             # Process each publisher network individually
             for publisher in eligible_publishers:
                 try:
-                    logger.info(f"🔄 Processing publisher network {publisher.network_id} for {publisher.email}")
                     
                     result = GAMReportService._process_publisher_network(
                         publisher, date_from, date_to
@@ -138,7 +136,7 @@ class GAMReportService:
                     total_records_created += result.get('records_created', 0)
                     total_records_updated += result.get('records_updated', 0)
                     
-                    logger.info(f"✅ Successfully processed {publisher.network_id}: {result.get('records_created', 0)} created, {result.get('records_updated', 0)} updated")
+                    logger.debug(f"Processed {publisher.network_id}: {result.get('records_created', 0)} created, {result.get('records_updated', 0)} updated")
                     
                 except Exception as e:
                     failed_count += 1
@@ -152,7 +150,7 @@ class GAMReportService:
             
             # Mark sync as completed
             sync_log.mark_completed(successful_count, failed_count, total_records_created, total_records_updated)
-            logger.info(f"🎉 Sync {sync_id} completed: {successful_count} success, {failed_count} failed")
+            logger.info(f"Sync {sync_id} completed: {successful_count} success, {failed_count} failed")
 
 
             return {
@@ -196,13 +194,11 @@ class GAMReportService:
                 logger.warning(f"⚠️ YAML file not found: {yaml_filepath}")
                 raise FileNotFoundError(f"YAML file not found: {yaml_filepath}")
             
-            logger.info(f"✅ Using parent YAML file: {yaml_filepath} for publisher {child_network_code}")
             
             try:
                 # Get GAM client for PARENT network (not child)
                 # Parent network can access all child network data through MANAGE_INVENTORY
                 client = GAMReportService._get_child_network_client(yaml_network_code)
-                logger.info(f"🔐 Authentication successful for parent network {yaml_network_code}")
                 
             except Exception as client_error:
                 error_message = str(client_error)
@@ -257,7 +253,7 @@ class GAMReportService:
                         'success': True,
                         'records': records
                     }
-                    logger.info(f"✅ {dimension_key}: {records} records")
+                    logger.debug(f"{dimension_key}: {records} records")
                 except Exception as dim_error:
                     logger.error(f"❌ Error processing {dimension_key}: {str(dim_error)}")
                     dimension_results[dimension_key] = {
@@ -299,12 +295,10 @@ class GAMReportService:
             if delegation_type == 'MANAGE_ACCOUNT':
                 yaml_network_code = child_network_code
                 target_network_code = child_network_code
-                logger.info(f"🔑 Using MANAGE_ACCOUNT: child YAML {child_network_code}")
             else:
                 # Use parent network for MANAGE_INVENTORY
                 yaml_network_code = parent_network_code
                 target_network_code = parent_network_code
-                logger.info(f"🔑 Using MANAGE_INVENTORY: parent YAML {yaml_network_code}")
             
             # Check if YAML file exists
             yaml_filepath = os.path.join(settings.BASE_DIR, 'yaml_files', f"{yaml_network_code}.yaml")
@@ -312,12 +306,10 @@ class GAMReportService:
                 logger.warning(f"⚠️ YAML file not found: {yaml_filepath}")
                 raise FileNotFoundError(f"YAML file not found: {yaml_filepath}")
             
-            logger.info(f"✅ Using YAML file: {yaml_filepath}")
             
             try:
                 # Get GAM client directly for child network (no parent dependency)
                 client = GAMReportService._get_child_network_client(child_network_code)
-                logger.info(f"🔐 Authentication successful for {child_network_code} via {yaml_network_code}")
                 
                 
             except Exception as client_error:
@@ -353,7 +345,6 @@ class GAMReportService:
             
             # Process each dimension type (including overview with DATE dimension)
             for dimension_key in GAMReportService.DIMENSION_MAP.keys():
-                logger.info(f"📈 Fetching {dimension_key} reports for {child_network_code}")
                 
                 try:
                     result = GAMReportService._fetch_child_dimension_reports(
@@ -394,7 +385,6 @@ class GAMReportService:
                     ]
                     
                     is_auth_error = any(keyword in error_message for keyword in auth_error_keywords)
-                    logger.info(f"🔍 Auth error check in main loop for {child_network_code}: {is_auth_error}")
                     
                     if is_auth_error:
                         logger.warning(f"🚫 Authentication error detected in main loop for {child_network_code} - skipping account and disabling service key")
@@ -435,7 +425,6 @@ class GAMReportService:
         """
         REPLICATED: Fetch reports using real GAM API like sub-reports
         """
-        logger.info(f"🚀 Fetching real GAM data for {dimension_key} from {invitation.child_network_code}")
 
         try:
             # Build report job - REPLICATED from sub-reports
@@ -478,7 +467,6 @@ class GAMReportService:
 
             report_job = {"reportQuery": report_query}
             
-            logger.info(f"📊 Report job configured for {dimension_key} ({date_from} to {date_to})")
             
             # Download report with authentication error handling
             try:
@@ -501,7 +489,6 @@ class GAMReportService:
                 ]
                 
                 is_auth_error = any(keyword in error_message for keyword in auth_error_keywords)
-                logger.info(f"🔍 Auth error check for {invitation.child_network_code}: {is_auth_error} (keywords: {auth_error_keywords})")
                 
                 if is_auth_error:
                     logger.warning(f"🚫 Authentication error detected during report fetch for {invitation.child_network_code} - skipping account and disabling service key")
@@ -529,12 +516,11 @@ class GAMReportService:
                 rows = list(reader)
 
                 if len(rows) <= 1:
-                    logger.info(f"📭 No data found for {dimension_key} in {invitation.child_network_code}")
                     return {'records_created': 0, 'records_updated': 0}
 
                 headers = [col.replace('Dimension.', '').replace('Column.', '') for col in rows[0]]
 
-                logger.info(f"📊 Processing {len(rows)-1} rows for {dimension_key} report")
+                logger.debug(f"Processing {len(rows)-1} rows for {dimension_key} report")
 
                 processed_records = GAMReportService._process_report_data(
                     headers, rows[1:], invitation, dimension_key, date_from, date_to
@@ -743,7 +729,7 @@ class GAMReportService:
                     }
                 )
             
-            logger.info(f"✅ Stored report data: {data['child_network_code']} - {data['dimension_type']}")
+            logger.debug(f"Stored report data: {data['child_network_code']} - {data['dimension_type']}")
             return {'created': 1 if created else 0, 'updated': 0 if created else 1}
             
         except Exception as e:

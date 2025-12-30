@@ -571,10 +571,6 @@ class PublicSignupSerializer(serializers.Serializer):
         # Send MCM invitation
         if network_id:
             # Send MCM invitation to existing GAM network
-            logger.info(f"🚀 Sending MCM invitation to existing GAM network {network_id} for {email}")
-        else:
-            # Send MCM invitation for new network (GAM will create it)
-            logger.info(f"🚀 Sending MCM invitation for new network to {email}")
         
         # Send MCM invitation via GAM API
         # Use network_id as child_network_code if provided (existing network), otherwise None (new network)
@@ -613,10 +609,9 @@ class PublicSignupSerializer(serializers.Serializer):
         
         if not site_result.get('success'):
             # If site addition fails, log but don't fail user creation
-            logger.warning(f"⚠️ Site could not be added to GAM: {site_result.get('error')}")
-            logger.info("   Site can be added manually later via GAM dashboard")
+            logger.warning(f"Site could not be added to GAM: {site_result.get('error')}")
         else:
-            logger.info(f"✅ Site added to parent GAM network: {site_result.get('site_url')}")
+            logger.debug(f"Site added to parent GAM network: {site_result.get('site_url')}")
         
         # Send welcome email with password reset link
         send_welcome_email_with_reset_link(user)
@@ -634,7 +629,6 @@ class PublicSignupSerializer(serializers.Serializer):
             gam_site_id=site_result.get('site_id') if site_result.get('success') else None,
             ads_txt_status=Site.AdsTxtStatus.MISSING
         )
-        logger.info(f"✅ Site record created: {site.id} for {user.email}")
         
         return user
 

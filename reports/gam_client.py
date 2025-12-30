@@ -46,7 +46,6 @@ class GAMClientService:
             if network_code:
                 original_network_code = yaml_config['ad_manager']['network_code']
                 yaml_config['ad_manager']['network_code'] = int(network_code)
-                logger.info(f"🔄 Using parent YAML for network {network_code} (original: {original_network_code})")
             
             # Create temporary YAML file with updated network code
             with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as temp_yaml:
@@ -56,7 +55,6 @@ class GAMClientService:
             try:
                 # Initialize client with temporary YAML
                 client = ad_manager.AdManagerClient.LoadFromStorage(temp_yaml_path)
-                logger.info(f"✅ GAM client created for network {network_code or 'parent'}")
                 return client
             finally:
                 # Clean up temporary file
@@ -124,7 +122,6 @@ class GAMClientService:
             # For managed inventory, revenue share is not required (set to 0)
             revenue_share_millipercent = 0
             
-            logger.info(f"📊 Managed Inventory invitation - no revenue share required")
             
             # For managed inventory, child_network_code is optional
             # If not provided, GAM will handle it when the invitation is accepted
@@ -137,9 +134,6 @@ class GAMClientService:
             # Only add childNetworkCode if provided (optional for managed inventory)
             if child_network_code:
                 child_publisher_data["childNetworkCode"] = child_network_code
-                logger.info(f"📋 Using provided child network code: {child_network_code}")
-            else:
-                logger.info(f"📋 No child network code provided - GAM will handle during invitation acceptance")
             
             # Company structure for MCM invitation (managed inventory format)
             company = {
@@ -149,7 +143,6 @@ class GAMClientService:
                 "email": email,
             }
             
-            logger.info(f"🚀 Sending MCM invitation with company structure: {company}")
             
             try:
                 # Create company (this sends the MCM invitation)
@@ -163,11 +156,7 @@ class GAMClientService:
                 elif isinstance(created_company, dict):
                     gam_company_id = str(created_company.get('id', ''))
                 
-                logger.info(f"✅ MCM invitation sent successfully to {email}")
-                logger.info(f"   GAM Company ID: {gam_company_id}")
-                logger.info(f"   Delegation Type: {delegation_type}")
-                if child_network_code:
-                    logger.info(f"   Child Network: {child_network_code}")
+                logger.info(f"MCM invitation sent successfully to {email} (Company ID: {gam_company_id})")
                 
                 return {
                     'success': True,
@@ -357,9 +346,6 @@ class GAMClientService:
                 "url": normalized_domain,
             }
             
-            logger.info(f"🚀 Adding site to parent GAM network: {normalized_domain}")
-            if child_network_code:
-                logger.info(f"   Will be associated with child network after MCM acceptance: {child_network_code}")
             
             try:
                 # Create site(s)
@@ -373,8 +359,7 @@ class GAMClientService:
                 elif isinstance(created_site, dict):
                     site_id = str(created_site.get('id', ''))
                 
-                logger.info(f"✅ Site added successfully: {normalized_domain}")
-                logger.info(f"   GAM Site ID: {site_id}")
+                logger.info(f"Site added successfully to GAM: {normalized_domain} (Site ID: {site_id})")
                 
                 return {
                     'success': True,
@@ -607,10 +592,9 @@ class GAMClientService:
                             
                             if alt_results and len(alt_results) > 0:
                                 results = alt_results
-                                logger.info(f"✅ Found site in GAM with alternative domain format: {alt_domain}")
                                 break
-                        except Exception as e:
-                            logger.debug(f"Tried alternative domain {alt_domain}: {str(e)}")
+                        except Exception:
+                            pass
                             continue
                 
                 # If still not found, return error but don't set status to needs_attention
@@ -704,7 +688,6 @@ class GAMClientService:
                             site.gam_site_id = result.get('site_id')
                         site.save(update_fields=['gam_status', 'gam_site_id'])
                         synced_count += 1
-                        logger.info(f"✅ Synced site {site.url}: {site.gam_status}")
                     else:
                         # If site not found in GAM, only update if it was previously marked as added
                         # Otherwise, preserve the existing status (might be getting_ready from signup)
@@ -718,7 +701,6 @@ class GAMClientService:
                                 logger.warning(f"⚠️ Site {site.url} was marked as added/ready but not found in GAM, marking as needs_attention")
                             else:
                                 # Keep existing status (probably getting_ready)
-                                logger.info(f"ℹ️ Site {site.url} not found in GAM, keeping status: {site.gam_status}")
                         error_count += 1
                         logger.warning(f"⚠️ Failed to sync site {site.url}: {result.get('error')}")
                         
@@ -804,8 +786,7 @@ class GAMClientService:
                     'network_id': network_id
                 })
             
-            logger.info(f"✅ Fetched network IDs for {len(matched_results)} publishers from GAM")
-            logger.info(f"   Found {sum(1 for r in matched_results if r['network_id'])} network IDs")
+            logger.info(f"Fetched network IDs: {sum(1 for r in matched_results if r['network_id'])} found out of {len(matched_results)} publishers")
             
             return {
                 'success': True,

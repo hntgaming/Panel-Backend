@@ -1125,7 +1125,7 @@ def fetch_missing_network_ids_view(request):
                     publisher.network_id = network_id
                     publisher.save(update_fields=['network_id'])
                     updated_count += 1
-                    logger.info(f"✅ Updated network_id for {email}: {network_id}")
+                    logger.debug(f"Updated network_id for {email}: {network_id}")
                 except User.DoesNotExist:
                     logger.warning(f"⚠️ Publisher not found: {email}")
                 except Exception as e:

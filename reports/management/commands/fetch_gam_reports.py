@@ -349,14 +349,12 @@ class Command(BaseCommand):
                 ]
             )
 
-            logger.info('🚀 Starting automated GAM report fetch via cron')
-            logger.info(f'📅 Start time: {start_time}')
-            logger.info(f'📝 Log file: {log_file}')
+            logger.info(f'Starting automated GAM report fetch (Start: {start_time}, Log: {log_file})')
 
             # Check if another instance is running
             lock_file = '/tmp/gam_reports_cron.lock'
             if os.path.exists(lock_file):
-                logger.warning('⚠️ Another cron job instance is already running. Skipping.')
+                logger.warning('Another cron job instance is already running. Skipping.')
                 return
 
             # Create lock file
@@ -378,8 +376,7 @@ class Command(BaseCommand):
                 end_time = timezone.now()
                 duration = (end_time - start_time).total_seconds()
 
-                logger.info(f'✅ Automated GAM report fetch completed successfully')
-                logger.info(f'⏱️ Duration: {duration:.2f} seconds')
+                logger.info(f'Automated GAM report fetch completed successfully (Duration: {duration:.2f}s)')
 
                 # Clean up old log files (keep last 7 days)
                 cls._cleanup_old_logs()
@@ -421,7 +418,7 @@ class Command(BaseCommand):
             for log_file in log_files:
                 if os.path.getmtime(log_file) < cutoff_time:
                     os.remove(log_file)
-                    logger.info(f'🗑️ Cleaned up old log file: {log_file}')
+                    logger.debug(f'Cleaned up old log file: {log_file}')
 
         except Exception as e:
             logger.warning(f'Failed to cleanup old logs: {e}')
