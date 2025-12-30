@@ -56,6 +56,7 @@ urlpatterns = [
 
     # Sites management endpoints
     path('sites/', views.SiteListView.as_view(), name='site_list'),  # GET all sites (admin sees all, publisher sees own)
+    path('sites/sync-status/', views.sync_sites_status_view, name='sync_sites_status'),  # POST to sync site statuses from GAM
 
     # Network ID management endpoints
     path('publishers/fetch-network-ids/', views.fetch_missing_network_ids_view, name='fetch_network_ids'),  # POST to fetch missing network IDs from GAM

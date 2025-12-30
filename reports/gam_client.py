@@ -475,6 +475,169 @@ class GAMClientService:
             return None
     
     @staticmethod
+    def get_site_status_from_gam(site_url=None, site_id=None):
+        """
+        Get site status from GAM API
+        
+        Args:
+            site_url: Site URL to look up
+            site_id: GAM Site ID to look up
+        
+        Returns:
+            dict: {'success': bool, 'status': str, 'site_id': str, 'error': str or None}
+            Status values: 'ready', 'getting_ready', 'requires_review', 'needs_attention'
+        """
+        try:
+            from decouple import config
+            from googleads import ad_manager
+            
+            # Get parent network code
+            parent_network_code = config('GAM_PARENT_NETWORK_CODE', default='23310681755')
+            
+            # Get GAM client using parent network YAML
+            client = GAMClientService.get_googleads_client(parent_network_code)
+            
+            # Use SiteService to get sites
+            site_service = client.GetService("SiteService", version="v202511")
+            
+            # Build statement
+            statement = ad_manager.StatementBuilder(version="v202511")
+            
+            if site_id:
+                statement.Where("id = :site_id").WithBindVariable("site_id", int(site_id))
+            elif site_url:
+                # Normalize URL for comparison
+                normalized_url = site_url.rstrip('/')
+                statement.Where("url = :url").WithBindVariable("url", normalized_url)
+            else:
+                return {
+                    'success': False,
+                    'error': 'Either site_url or site_id must be provided'
+                }
+            
+            # Get sites
+            page = site_service.getSitesByStatement(statement.ToStatement())
+            results = (getattr(page, "results", None) or page.get("results", []))
+            
+            if not results or len(results) == 0:
+                return {
+                    'success': False,
+                    'error': 'Site not found in GAM',
+                    'status': 'needs_attention'
+                }
+            
+            site = results[0]
+            
+            # Extract site data
+            if hasattr(site, "__dict__"):  # suds object
+                gam_site_id = str(getattr(site, "id", None) or "")
+                site_status = getattr(site, "status", None)
+                # Check for review status or approval status
+                # GAM sites have status like: ACTIVE, INACTIVE
+                # We need to map these to our statuses
+            else:  # plain dict
+                gam_site_id = str(site.get("id", "") or "")
+                site_status = site.get("status")
+            
+            # Map GAM status to our status values
+            # GAM site statuses: ACTIVE, INACTIVE
+            # We'll use additional logic based on site properties
+            mapped_status = 'getting_ready'  # Default
+            
+            if site_status:
+                status_str = str(site_status).upper()
+                if status_str == 'ACTIVE':
+                    # Check if site needs review (this might require additional API calls)
+                    # For now, assume active sites are ready
+                    mapped_status = 'ready'
+                elif status_str == 'INACTIVE':
+                    mapped_status = 'needs_attention'
+            
+            # Try to get more detailed status from site properties
+            # Sites might have approval status or review status
+            # This would require checking additional fields or making separate API calls
+            
+            return {
+                'success': True,
+                'status': mapped_status,
+                'site_id': gam_site_id,
+                'gam_status': site_status
+            }
+            
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"❌ Failed to get site status from GAM: {error_msg}")
+            
+            return {
+                'success': False,
+                'error': f'Failed to get site status: {error_msg}',
+                'status': 'needs_attention'
+            }
+    
+    @staticmethod
+    def sync_all_sites_status_from_gam():
+        """
+        Sync site statuses from GAM for all sites in the database
+        
+        Returns:
+            dict: {'success': bool, 'synced': int, 'errors': int, 'error': str or None}
+        """
+        try:
+            from accounts.models import Site
+            
+            # Get all sites
+            sites = Site.objects.all()
+            
+            synced_count = 0
+            error_count = 0
+            
+            for site in sites:
+                try:
+                    # Get status from GAM
+                    if site.gam_site_id:
+                        result = GAMClientService.get_site_status_from_gam(site_id=site.gam_site_id)
+                    else:
+                        result = GAMClientService.get_site_status_from_gam(site_url=site.url)
+                    
+                    if result.get('success'):
+                        # Update site status
+                        site.gam_status = result.get('status', site.gam_status)
+                        if result.get('site_id') and not site.gam_site_id:
+                            site.gam_site_id = result.get('site_id')
+                        site.save(update_fields=['gam_status', 'gam_site_id'])
+                        synced_count += 1
+                        logger.info(f"✅ Synced site {site.url}: {site.gam_status}")
+                    else:
+                        # If site not found in GAM, mark as needs_attention
+                        if 'not found' in result.get('error', '').lower():
+                            site.gam_status = Site.GamStatus.NEEDS_ATTENTION
+                            site.save(update_fields=['gam_status'])
+                        error_count += 1
+                        logger.warning(f"⚠️ Failed to sync site {site.url}: {result.get('error')}")
+                        
+                except Exception as e:
+                    error_count += 1
+                    logger.error(f"❌ Error syncing site {site.id}: {str(e)}")
+            
+            return {
+                'success': True,
+                'synced': synced_count,
+                'errors': error_count,
+                'total': sites.count()
+            }
+            
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"❌ Failed to sync sites status: {error_msg}")
+            
+            return {
+                'success': False,
+                'error': f'Failed to sync sites status: {error_msg}',
+                'synced': 0,
+                'errors': 0
+            }
+    
+    @staticmethod
     def fetch_network_ids_for_publishers(publisher_emails):
         """
         Fetch network IDs from GAM for multiple publishers by their email addresses

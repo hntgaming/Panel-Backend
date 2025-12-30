@@ -946,17 +946,87 @@ class SiteListView(generics.ListAPIView):
     GET all sites
     - Admin: sees all sites
     - Publisher: sees only their own sites
+    
+    Also creates Site records for existing publishers who don't have sites yet
     """
     permission_classes = [IsAuthenticated]
     serializer_class = SiteSerializer
     
     def get_queryset(self):
+        # Create Site records for publishers who don't have sites yet
+        from .models import Site
+        
+        if self.request.user.is_admin_user:
+            # For admin: check all publishers
+            publishers_without_sites = User.objects.filter(
+                role=User.UserRole.PUBLISHER,
+                site_url__isnull=False
+            ).exclude(site_url='').exclude(sites__isnull=False)
+        else:
+            # For publisher: only check their own
+            publishers_without_sites = User.objects.filter(
+                id=self.request.user.id,
+                role=User.UserRole.PUBLISHER,
+                site_url__isnull=False
+            ).exclude(site_url='').exclude(sites__isnull=False)
+        
+        # Create Site records for publishers without sites
+        for publisher in publishers_without_sites:
+            Site.objects.get_or_create(
+                publisher=publisher,
+                url=publisher.site_url,
+                defaults={
+                    'gam_status': Site.GamStatus.GETTING_READY,
+                    'ads_txt_status': Site.AdsTxtStatus.MISSING
+                }
+            )
+        
+        # Return queryset
         if self.request.user.is_admin_user:
             # Admin sees all sites
             return Site.objects.select_related('publisher').all()
         else:
             # Publisher sees only their own sites
             return Site.objects.filter(publisher=self.request.user).select_related('publisher')
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def sync_sites_status_view(request):
+    """
+    Sync site statuses from GAM for all sites
+    Admin only
+    """
+    if not request.user.is_admin_user:
+        return Response(
+            {'error': 'Only admin users can sync site statuses'},
+            status=status.HTTP_403_FORBIDDEN
+        )
+    
+    try:
+        # Sync all sites status from GAM
+        result = GAMClientService.sync_all_sites_status_from_gam()
+        
+        if not result.get('success'):
+            return Response({
+                'success': False,
+                'error': result.get('error', 'Failed to sync site statuses')
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+        return Response({
+            'success': True,
+            'message': f'Synced {result.get("synced", 0)} sites from GAM',
+            'synced': result.get('synced', 0),
+            'errors': result.get('errors', 0),
+            'total': result.get('total', 0)
+        })
+        
+    except Exception as e:
+        logger.error(f"❌ Error syncing site statuses: {str(e)}")
+        return Response({
+            'success': False,
+            'error': f'Failed to sync site statuses: {str(e)}'
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @api_view(['POST'])
