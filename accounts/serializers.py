@@ -568,10 +568,6 @@ class PublicSignupSerializer(serializers.Serializer):
         
         child_network_name = f"{site_name} - PubDash"
         
-        # Send MCM invitation
-        if network_id:
-            # Send MCM invitation to existing GAM network
-        
         # Send MCM invitation via GAM API
         # Use network_id as child_network_code if provided (existing network), otherwise None (new network)
         mcm_result = GAMClientService.send_mcm_invitation(
