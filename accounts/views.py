@@ -21,6 +21,7 @@ from core.models import StatusChoices
 # Removed gam_accounts dependencies
 
 from .models import PublisherPermission, User, Site
+from reports.gam_client import GAMClientService
 
 logger = logging.getLogger(__name__)
 DEBUG = settings.DEBUG
@@ -956,3 +957,78 @@ class SiteListView(generics.ListAPIView):
         else:
             # Publisher sees only their own sites
             return Site.objects.filter(publisher=self.request.user).select_related('publisher')
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def fetch_missing_network_ids_view(request):
+    """
+    Fetch network IDs from GAM for publishers where network_id is missing
+    Admin only
+    """
+    if not request.user.is_admin_user:
+        return Response(
+            {'error': 'Only admin users can fetch network IDs'},
+            status=status.HTTP_403_FORBIDDEN
+        )
+    
+    try:
+        # Get all publishers with missing network_id
+        publishers_missing_network = User.objects.filter(
+            role=User.UserRole.PUBLISHER,
+            network_id__in=['', None]
+        ).exclude(email__isnull=True).exclude(email='')
+        
+        if not publishers_missing_network.exists():
+            return Response({
+                'success': True,
+                'message': 'No publishers with missing network IDs found',
+                'updated': 0
+            })
+        
+        # Get their emails
+        publisher_emails = list(publishers_missing_network.values_list('email', flat=True))
+        
+        # Fetch network IDs from GAM
+        gam_result = GAMClientService.fetch_network_ids_for_publishers(publisher_emails)
+        
+        if not gam_result.get('success'):
+            return Response({
+                'success': False,
+                'error': gam_result.get('error', 'Failed to fetch network IDs from GAM')
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+        # Update publishers with found network IDs
+        updated_count = 0
+        results = gam_result.get('results', [])
+        
+        for result in results:
+            email = result.get('email')
+            network_id = result.get('network_id')
+            
+            if email and network_id:
+                try:
+                    publisher = User.objects.get(email=email, role=User.UserRole.PUBLISHER)
+                    publisher.network_id = network_id
+                    publisher.save(update_fields=['network_id'])
+                    updated_count += 1
+                    logger.info(f"✅ Updated network_id for {email}: {network_id}")
+                except User.DoesNotExist:
+                    logger.warning(f"⚠️ Publisher not found: {email}")
+                except Exception as e:
+                    logger.error(f"❌ Failed to update {email}: {str(e)}")
+        
+        return Response({
+            'success': True,
+            'message': f'Fetched network IDs from GAM',
+            'total_checked': len(publisher_emails),
+            'total_found': gam_result.get('total_found', 0),
+            'updated': updated_count
+        })
+        
+    except Exception as e:
+        logger.error(f"❌ Error fetching network IDs: {str(e)}")
+        return Response({
+            'success': False,
+            'error': f'Failed to fetch network IDs: {str(e)}'
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

@@ -57,4 +57,7 @@ urlpatterns = [
     # Sites management endpoints
     path('sites/', views.SiteListView.as_view(), name='site_list'),  # GET all sites (admin sees all, publisher sees own)
 
+    # Network ID management endpoints
+    path('publishers/fetch-network-ids/', views.fetch_missing_network_ids_view, name='fetch_network_ids'),  # POST to fetch missing network IDs from GAM
+
 ]

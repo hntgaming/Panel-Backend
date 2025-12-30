@@ -473,3 +473,83 @@ class GAMClientService:
         except Exception as e:
             logger.error(f"❌ Error looking up existing site: {str(e)}")
             return None
+    
+    @staticmethod
+    def fetch_network_ids_for_publishers(publisher_emails):
+        """
+        Fetch network IDs from GAM for multiple publishers by their email addresses
+        
+        Args:
+            publisher_emails: List of email addresses to look up
+        
+        Returns:
+            dict: {'success': bool, 'results': [{'email': str, 'network_id': str or None}], 'error': str or None}
+        """
+        try:
+            from decouple import config
+            from googleads import ad_manager
+            
+            # Get parent network code
+            parent_network_code = config('GAM_PARENT_NETWORK_CODE', default='23310681755')
+            
+            # Get GAM client using parent network YAML
+            client = GAMClientService.get_googleads_client(parent_network_code)
+            
+            # Use CompanyService to get child publishers
+            company_service = client.GetService("CompanyService", version="v202511")
+            
+            # Build statement to get all child publishers
+            statement = ad_manager.StatementBuilder(version="v202511")
+            statement.Where("type = :ctype").WithBindVariable("ctype", "CHILD_PUBLISHER")
+            
+            # Get all child publishers
+            page = company_service.getCompaniesByStatement(statement.ToStatement())
+            
+            # Handle both dict and object formats
+            results = (getattr(page, "results", None) or page.get("results", []))
+            
+            # Create a mapping of email to network_id
+            email_to_network = {}
+            for company in results:
+                if hasattr(company, "__dict__"):  # suds object
+                    cp = getattr(company, "childPublisher", None) or {}
+                    child_code = getattr(cp, "childNetworkCode", None)
+                    email_value = getattr(company, "email", None)
+                else:  # plain dict
+                    cp = company.get("childPublisher", {}) or {}
+                    child_code = cp.get("childNetworkCode")
+                    email_value = company.get("email")
+                
+                if email_value and child_code:
+                    # Normalize email to lowercase for matching
+                    email_to_network[email_value.lower()] = str(child_code)
+            
+            # Match publisher emails with network IDs
+            matched_results = []
+            for email in publisher_emails:
+                normalized_email = email.lower() if email else None
+                network_id = email_to_network.get(normalized_email) if normalized_email else None
+                matched_results.append({
+                    'email': email,
+                    'network_id': network_id
+                })
+            
+            logger.info(f"✅ Fetched network IDs for {len(matched_results)} publishers from GAM")
+            logger.info(f"   Found {sum(1 for r in matched_results if r['network_id'])} network IDs")
+            
+            return {
+                'success': True,
+                'results': matched_results,
+                'total_checked': len(publisher_emails),
+                'total_found': sum(1 for r in matched_results if r['network_id'])
+            }
+            
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"❌ Failed to fetch network IDs from GAM: {error_msg}")
+            
+            return {
+                'success': False,
+                'error': f'Failed to fetch network IDs: {error_msg}',
+                'results': []
+            }
