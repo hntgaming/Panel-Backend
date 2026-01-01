@@ -33,7 +33,7 @@ def send_welcome_email_with_reset_link(user):
     text_content = f"""
 Hi {user.get_full_name() or user.username},
 
-Welcome to HNT Gaming's Enterprise AdTech Platform!
+Welcome to H&T GAMING Publisher Platform!
 
 You've been granted access to our comprehensive Google Ad Manager integration system, designed to maximize your revenue through advanced programmatic advertising solutions.
 
@@ -43,7 +43,7 @@ PLATFORM CAPABILITIES:
 - Real-time revenue analytics and comprehensive reporting dashboards
 - Automated revenue sharing calculations with transparent 80/20 split
 - Advanced GAM integration with MCM (Multiple Customer Management)
-- Enterprise-grade security and secure payment management
+- Advanced security and secure payment management
 - High-performance infrastructure with sub-second response times
 
 PREMIUM DEMAND PARTNERS:
@@ -63,8 +63,8 @@ VIDEO ADVERTISING FORMATS:
 - VAST/VPAID compliant video ad serving with full IAB standards support
 - Advanced video targeting, frequency capping, and viewability optimization
 
-WHY CHOOSE HNT GAMING?
-Our platform is built for enterprise-scale publishers who demand the highest levels of performance, reliability, and revenue optimization. With our advanced AdTech stack, you'll have access to premium demand sources, cutting-edge header bidding technology, and comprehensive video ad solutions—all managed through an intuitive, powerful dashboard.
+WHY CHOOSE H&T GAMING?
+Our platform is built for publishers who demand the highest levels of performance, reliability, and revenue optimization. With our advanced AdTech stack, you'll have access to premium demand sources, cutting-edge header bidding technology, and comprehensive video ad solutions—all managed through an intuitive, powerful dashboard.
 
 SECURITY NOTICE:
 This activation link is valid for 24 hours. If you didn't request this invitation, please ignore this email or contact our support team immediately at ManagedInventory@hntgaming.me.
@@ -72,17 +72,17 @@ This activation link is valid for 24 hours. If you didn't request this invitatio
 Ready to unlock the full potential of programmatic advertising? Click the link above to activate your account and start maximizing your ad revenue today!
 
 Best regards,
-HNT Gaming Team
+H&T GAMING Team
 
 ---
 Dashboard: https://publisher.hntgaming.me
 Website: https://hntgaming.me
 Support: ManagedInventory@hntgaming.me
-© 2025 HNT Gaming. All rights reserved.
+© 2025 H&T GAMING. All rights reserved.
     """
 
     # Create email
-    subject = "🚀 Welcome to HNT Gaming - Enterprise AdTech Platform"
+    subject = "🚀 Welcome to H&T GAMING Publisher Platform"
     from_email = settings.DEFAULT_FROM_EMAIL
     to_email = [user.email]
 
