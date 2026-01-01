@@ -41,7 +41,6 @@ Activate your account: {reset_url}
 
 PLATFORM CAPABILITIES:
 - Real-time revenue analytics and comprehensive reporting dashboards
-- Automated revenue sharing calculations with transparent 80/20 split
 - Advanced GAM integration with MCM (Multiple Customer Management)
 - Advanced security and secure payment management
 - High-performance infrastructure with sub-second response times
