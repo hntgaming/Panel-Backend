@@ -33,27 +33,56 @@ def send_welcome_email_with_reset_link(user):
     text_content = f"""
 Hi {user.get_full_name() or user.username},
 
-Welcome to HNT Gaming's AdTech Platform!
+Welcome to HNT Gaming's Enterprise AdTech Platform!
 
-You've been granted access to our powerful Google Ad Manager integration system.
+You've been granted access to our comprehensive Google Ad Manager integration system, designed to maximize your revenue through advanced programmatic advertising solutions.
 
-Set your password: {reset_url}
+Activate your account: {reset_url}
 
-Features:
-- Real-time revenue analytics and reporting
-- Automated revenue sharing calculations
-- Advanced GAM integration and optimization
-- Secure payment management system
-- Lightning-fast data processing
+PLATFORM CAPABILITIES:
+- Real-time revenue analytics and comprehensive reporting dashboards
+- Automated revenue sharing calculations with transparent 80/20 split
+- Advanced GAM integration with MCM (Multiple Customer Management)
+- Enterprise-grade security and secure payment management
+- High-performance infrastructure with sub-second response times
 
-This link is valid for 24 hours. If you didn't request this invitation, please ignore this email.
+PREMIUM DEMAND PARTNERS:
+- Access to premium programmatic demand sources including Google AdX, Google AdSense, and top-tier DSPs
+- Optimized demand stack with real-time bidding (RTB) and private marketplace (PMP) deals
+- Dynamic price floors and yield optimization for maximum revenue
+
+HEADER BIDDING INTEGRATION:
+- Prebid.js integration for simultaneous bid requests to multiple demand partners
+- Server-side header bidding (SSHB) support for reduced latency
+- Advanced bid management with timeout controls and price priority optimization
+- Real-time bid analytics and performance monitoring
+
+VIDEO ADVERTISING FORMATS:
+- Instream Video Ads: Pre-roll, mid-roll, and post-roll video placements within video content players
+- Outstream Video Ads: Standalone video units that play outside of video content (in-article, in-feed, floating players)
+- VAST/VPAID compliant video ad serving with full IAB standards support
+- Advanced video targeting, frequency capping, and viewability optimization
+
+WHY CHOOSE HNT GAMING?
+Our platform is built for enterprise-scale publishers who demand the highest levels of performance, reliability, and revenue optimization. With our advanced AdTech stack, you'll have access to premium demand sources, cutting-edge header bidding technology, and comprehensive video ad solutions—all managed through an intuitive, powerful dashboard.
+
+SECURITY NOTICE:
+This activation link is valid for 24 hours. If you didn't request this invitation, please ignore this email or contact our support team immediately at ManagedInventory@hntgaming.me.
+
+Ready to unlock the full potential of programmatic advertising? Click the link above to activate your account and start maximizing your ad revenue today!
 
 Best regards,
 HNT Gaming Team
+
+---
+Dashboard: https://publisher.hntgaming.me
+Website: https://hntgaming.me
+Support: ManagedInventory@hntgaming.me
+© 2025 HNT Gaming. All rights reserved.
     """
 
     # Create email
-    subject = "🚀 Welcome to HNT Gaming - AdTech Platform"
+    subject = "🚀 Welcome to HNT Gaming - Enterprise AdTech Platform"
     from_email = settings.DEFAULT_FROM_EMAIL
     to_email = [user.email]
 
