@@ -611,37 +611,74 @@ class GAMClientService:
             # Extract site data
             if hasattr(site, "__dict__"):  # suds object
                 gam_site_id = str(getattr(site, "id", None) or "")
-                site_status = getattr(site, "status", None)
-                # Check for review status or approval status
-                # GAM sites have status like: ACTIVE, INACTIVE
-                # We need to map these to our statuses
+                # Get all attributes
+                all_attrs = [attr for attr in dir(site) if not attr.startswith('_')]
+                # Try to get status from common fields
+                status_value = None
+                for attr in all_attrs:
+                    try:
+                        value = getattr(site, attr, None)
+                        if value and not callable(value):
+                            value_str = str(value).strip()
+                            # Check if this looks like one of our 4 status strings
+                            value_lower = value_str.lower()
+                            if any(stat_str in value_lower for stat_str in ['ready', 'getting ready', 'requires review', 'needs attention']):
+                                status_value = value_str
+                                logger.debug(f"🔍 Found status in field '{attr}': '{status_value}'")
+                                break
+                    except Exception:
+                        pass
             else:  # plain dict
                 gam_site_id = str(site.get("id", "") or "")
-                site_status = site.get("status")
+                # Check all keys for status values
+                status_value = None
+                for key, value in site.items():
+                    if value:
+                        value_str = str(value).strip()
+                        value_lower = value_str.lower()
+                        if any(stat_str in value_lower for stat_str in ['ready', 'getting ready', 'requires review', 'needs attention']):
+                            status_value = value_str
+                            logger.debug(f"🔍 Found status in field '{key}': '{status_value}'")
+                            break
+                all_attrs = list(site.keys())
             
-            # Map GAM status to our status values
-            # GAM site statuses: ACTIVE, INACTIVE
-            # We'll use additional logic based on site properties
-            mapped_status = 'getting_ready'  # Default
+            # Map GAM status to our 4 status values exactly as GAM shows them:
+            # - "Ready"
+            # - "Getting ready"
+            # - "Requires review"
+            # - "Needs attention"
             
-            if site_status:
-                status_str = str(site_status).upper()
-                if status_str == 'ACTIVE':
-                    # Check if site needs review (this might require additional API calls)
-                    # For now, assume active sites are ready
-                    mapped_status = 'ready'
-                elif status_str == 'INACTIVE':
+            mapped_status = 'getting_ready'  # Default for unknown cases
+            
+            if status_value:
+                status_lower = status_value.lower()
+                
+                # Map exact GAM status strings (case-insensitive matching)
+                if 'getting ready' in status_lower:
+                    mapped_status = 'getting_ready'
+                elif 'requires review' in status_lower:
+                    mapped_status = 'requires_review'
+                elif 'needs attention' in status_lower:
                     mapped_status = 'needs_attention'
+                elif status_lower == 'ready' or (status_lower.startswith('ready') and 'getting' not in status_lower):
+                    mapped_status = 'ready'
+                else:
+                    # Unknown status - log for debugging
+                    logger.warning(f"⚠️ Unknown GAM site status: '{status_value}'. Available fields: {all_attrs[:15]}")
+                    mapped_status = 'getting_ready'
+            else:
+                # No status found - log for debugging
+                logger.warning(f"⚠️ No GAM status found. Available fields: {all_attrs[:15]}")
+                mapped_status = 'getting_ready'
             
-            # Try to get more detailed status from site properties
-            # Sites might have approval status or review status
-            # This would require checking additional fields or making separate API calls
+            # Log the mapping
+            logger.debug(f"🔍 GAM Site Status: '{status_value}' -> '{mapped_status}' (site_id={gam_site_id})")
             
             return {
                 'success': True,
                 'status': mapped_status,
                 'site_id': gam_site_id,
-                'gam_status': site_status
+                'gam_status': status_value  # Original GAM status value for reference
             }
             
         except Exception as e:
