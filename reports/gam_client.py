@@ -608,77 +608,54 @@ class GAMClientService:
             
             site = results[0]
             
-            # Extract site data
+            # Extract site data - get approvalStatus field directly
+            # According to GAM API: https://developers.google.com/ad-manager/api/reference/v202511/SiteService
+            # approvalStatus can be: DRAFT, UNCHECKED, APPROVED, DISAPPROVED, REQUIRES_REVIEW, UNKNOWN
             if hasattr(site, "__dict__"):  # suds object
                 gam_site_id = str(getattr(site, "id", None) or "")
-                # Get all attributes
-                all_attrs = [attr for attr in dir(site) if not attr.startswith('_')]
-                # Try to get status from common fields
-                status_value = None
-                for attr in all_attrs:
-                    try:
-                        value = getattr(site, attr, None)
-                        if value and not callable(value):
-                            value_str = str(value).strip()
-                            # Check if this looks like one of our 4 status strings
-                            value_lower = value_str.lower()
-                            if any(stat_str in value_lower for stat_str in ['ready', 'getting ready', 'requires review', 'needs attention']):
-                                status_value = value_str
-                                logger.debug(f"🔍 Found status in field '{attr}': '{status_value}'")
-                                break
-                    except Exception:
-                        pass
+                approval_status = getattr(site, "approvalStatus", None)
             else:  # plain dict
                 gam_site_id = str(site.get("id", "") or "")
-                # Check all keys for status values
-                status_value = None
-                for key, value in site.items():
-                    if value:
-                        value_str = str(value).strip()
-                        value_lower = value_str.lower()
-                        if any(stat_str in value_lower for stat_str in ['ready', 'getting ready', 'requires review', 'needs attention']):
-                            status_value = value_str
-                            logger.debug(f"🔍 Found status in field '{key}': '{status_value}'")
-                            break
-                all_attrs = list(site.keys())
+                approval_status = site.get("approvalStatus")
             
-            # Map GAM status to our 4 status values exactly as GAM shows them:
-            # - "Ready"
-            # - "Getting ready"
-            # - "Requires review"
-            # - "Needs attention"
+            # Map GAM approvalStatus enum values to our 4 status values exactly as GAM UI shows them:
+            # GAM API approvalStatus -> Dashboard status
+            # - "Ready" = APPROVED
+            # - "Getting ready" = DRAFT or UNCHECKED
+            # - "Requires review" = REQUIRES_REVIEW
+            # - "Needs attention" = DISAPPROVED or UNKNOWN
             
             mapped_status = 'getting_ready'  # Default for unknown cases
             
-            if status_value:
-                status_lower = status_value.lower()
+            if approval_status:
+                approval_status_str = str(approval_status).upper().strip()
                 
-                # Map exact GAM status strings (case-insensitive matching)
-                if 'getting ready' in status_lower:
-                    mapped_status = 'getting_ready'
-                elif 'requires review' in status_lower:
-                    mapped_status = 'requires_review'
-                elif 'needs attention' in status_lower:
-                    mapped_status = 'needs_attention'
-                elif status_lower == 'ready' or (status_lower.startswith('ready') and 'getting' not in status_lower):
-                    mapped_status = 'ready'
+                # Map GAM API approvalStatus enum to our status values
+                if approval_status_str == 'APPROVED':
+                    mapped_status = 'ready'  # "Ready"
+                elif approval_status_str == 'REQUIRES_REVIEW':
+                    mapped_status = 'requires_review'  # "Requires review"
+                elif approval_status_str in ['DRAFT', 'UNCHECKED']:
+                    mapped_status = 'getting_ready'  # "Getting ready"
+                elif approval_status_str in ['DISAPPROVED', 'UNKNOWN']:
+                    mapped_status = 'needs_attention'  # "Needs attention"
                 else:
-                    # Unknown status - log for debugging
-                    logger.warning(f"⚠️ Unknown GAM site status: '{status_value}'. Available fields: {all_attrs[:15]}")
+                    # Unknown approval status - log for debugging
+                    logger.warning(f"⚠️ Unknown GAM approvalStatus: '{approval_status_str}'. Defaulting to 'getting_ready'")
                     mapped_status = 'getting_ready'
             else:
-                # No status found - log for debugging
-                logger.warning(f"⚠️ No GAM status found. Available fields: {all_attrs[:15]}")
+                # No approval status found - default to getting_ready
+                logger.warning(f"⚠️ No approvalStatus field found in GAM site object. Defaulting to 'getting_ready'")
                 mapped_status = 'getting_ready'
             
             # Log the mapping
-            logger.debug(f"🔍 GAM Site Status: '{status_value}' -> '{mapped_status}' (site_id={gam_site_id})")
+            logger.debug(f"🔍 GAM Site Status Mapping: approvalStatus='{approval_status}' -> mapped='{mapped_status}' (site_id={gam_site_id})")
             
             return {
                 'success': True,
                 'status': mapped_status,
                 'site_id': gam_site_id,
-                'gam_status': status_value  # Original GAM status value for reference
+                'gam_status': approval_status  # Original GAM approvalStatus enum value for reference
             }
             
         except Exception as e:
