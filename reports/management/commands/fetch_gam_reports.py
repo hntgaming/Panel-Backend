@@ -6,29 +6,45 @@ from datetime import datetime, timedelta
 import logging
 import concurrent.futures
 import time
+import threading
+
+from django.conf import settings
+from django.core.mail import send_mail
 
 # Setup Django environment
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'multigam.settings')
 django.setup()
 
 from reports.services import GAMReportService
-# Removed gam_accounts dependencies
 
 logger = logging.getLogger(__name__)
 
-# Google Ad Manager API Quota Settings
-# For Ad Manager accounts (not 360): 2 requests per second limit
-# For Ad Manager 360 accounts: 8 requests per second limit
-# We're using Ad Manager 360 accounts, so 8 requests per second
-API_REQUESTS_PER_SECOND = 8
-REQUEST_DELAY = 1.0 / API_REQUESTS_PER_SECOND  # 0.125 seconds between requests
-MAX_CONCURRENT_REQUESTS = 8  # Maximum concurrent API requests for GAM 360
-QUOTA_RETRY_DELAY = 10  # Seconds to wait when quota exceeded
-MAX_QUOTA_RETRIES = 3
+# ============================================================================
+# OPTIMIZED PARALLEL PROCESSING SETTINGS (From GAM Sentinel)
+# ============================================================================
+# Google Ad Manager API: 2 requests/second PER ACCOUNT (not global!)
+# This means each account has independent quota
+# We can process ALL accounts in parallel without global throttling
+# ============================================================================
+
+# No global rate limiting needed - each account has independent quota
+QUOTA_RETRY_DELAY = 5  # Seconds to wait when individual account quota exceeded
+MAX_QUOTA_RETRIES = 5  # Retries per account
+
+# Maximum parallelism - process ALL accounts simultaneously
+DEFAULT_PARALLEL_ENABLED = True
+DEFAULT_MAX_WORKERS = 500  # High worker count for true parallelism
 
 
 class Command(BaseCommand):
-    help = 'Fetch GAM reports for all eligible child networks with corrected GAM API mappings'
+    help = 'Fetch GAM reports for all eligible publisher networks - OPTIMIZED PARALLEL VERSION'
+
+    def __init__(self):
+        super().__init__()
+        self._worker_lock = threading.Lock()
+        self._active_workers = 0
+        self._completed_count = 0
+        self._total_accounts = 0
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -49,34 +65,40 @@ class Command(BaseCommand):
         )
         parser.add_argument(
             '--parallel',
+            dest='parallel',
             action='store_true',
-            default=True,
-            help='Enable parallel processing for all accounts (default: True)',
+            default=DEFAULT_PARALLEL_ENABLED,
+            help=f'Enable parallel processing (default: {DEFAULT_PARALLEL_ENABLED})',
+        )
+        parser.add_argument(
+            '--no-parallel',
+            dest='parallel',
+            action='store_false',
+            help='Disable parallel processing for this run',
         )
         parser.add_argument(
             '--max-workers',
             type=int,
-            default=MAX_CONCURRENT_REQUESTS,
-            help=f'Maximum number of parallel workers (default: {MAX_CONCURRENT_REQUESTS} - GAM 360 API quota compliant)',
+            default=DEFAULT_MAX_WORKERS,
+            help=f'Maximum number of parallel workers (default: {DEFAULT_MAX_WORKERS})',
         )
         parser.add_argument(
-            '--batch-size',
-            type=int,
-            default=93,
-            help='Number of accounts to process in each batch (default: 93 for all accounts)',
+            '--network-id',
+            type=str,
+            help='Process only specific network ID (for targeted fetching)',
         )
 
     def handle(self, *args, **options):
         self.stdout.write(
-            self.style.SUCCESS('🚀 Starting GAM reports fetch...')
+            self.style.SUCCESS('🚀 Starting GAM reports fetch (OPTIMIZED PARALLEL MODE)...')
         )
         
         # Parse dates
         date_from = options.get('date_from')
         date_to = options.get('date_to')
-        parallel = options.get('parallel', True)  # Default to True
-        max_workers = options.get('max_workers', 100)
-        batch_size = options.get('batch_size', 93)
+        parallel = options.get('parallel', DEFAULT_PARALLEL_ENABLED)
+        max_workers = options.get('max_workers', DEFAULT_MAX_WORKERS)
+        network_id = options.get('network_id')
         
         if date_from:
             try:
@@ -105,14 +127,18 @@ class Command(BaseCommand):
             date_from = date_to - timedelta(days=days_back)
         
         self.stdout.write(f'📅 Fetching reports from {date_from} to {date_to}')
-        self.stdout.write(f'⚡ Parallel processing: {max_workers} workers (API quota compliant), batch size: {batch_size}')
-        self.stdout.write(f'🕐 API Rate Limit: {API_REQUESTS_PER_SECOND} requests/second, {REQUEST_DELAY:.1f}s delay between requests')
+        parallel_status = 'enabled' if parallel else 'disabled'
+        self.stdout.write(f'⚡ Parallel processing {parallel_status}; max workers: {max_workers}')
+        self.stdout.write(f'🔓 NO GLOBAL THROTTLING - Each account has independent 2 req/sec quota')
+        
+        if network_id:
+            self.stdout.write(f'🎯 Targeting specific network: {network_id}')
         
         try:
             # Process GAM reports
             if parallel:
-                result = self._process_parallel(
-                    date_from, date_to, max_workers, batch_size
+                result = self._process_all_parallel(
+                    date_from, date_to, max_workers, network_id
                 )
             else:
                 result = GAMReportService.fetch_gam_reports(
@@ -131,10 +157,9 @@ class Command(BaseCommand):
                         f'   Records updated: {result["total_records_updated"]}'
                     )
                 )
-                
             else:
                 self.stdout.write(
-                    self.style.ERROR(f'❌ GAM Reports Sync failed: {result["error"]}')
+                    self.style.ERROR(f'❌ GAM Reports Sync failed: {result.get("error", "Unknown error")}')
                 )
         
         except Exception as e:
@@ -144,20 +169,39 @@ class Command(BaseCommand):
             )
             raise CommandError(f'Report fetch failed: {str(e)}')
 
-    def _process_parallel(self, date_from, date_to, max_workers, batch_size):
-        """Process all accounts in parallel"""
-        # Get all active publisher users with network IDs
+    def _process_all_parallel(self, date_from, date_to, max_workers, network_id=None):
+        """
+        Process ALL accounts in TRUE PARALLEL - no global throttling!
+        Each account has its own independent API quota (2 req/sec per account).
+        Optimized version from GAM Sentinel.
+        """
         from accounts.models import User
+        from core.models import StatusChoices
+        
+        # Get eligible publishers with active status and network_id
         eligible_publishers = User.objects.filter(
-            role='publisher',
-            is_active=True,
+            role=User.UserRole.PUBLISHER,
+            status=StatusChoices.ACTIVE,
             network_id__isnull=False
         ).exclude(network_id='')
         
-        total_accounts = eligible_publishers.count()
-        self.stdout.write(f'📊 Found {total_accounts} eligible publisher accounts')
+        # Filter by specific network if provided
+        if network_id:
+            eligible_publishers = eligible_publishers.filter(network_id=network_id)
         
-        if total_accounts == 0:
+        publisher_list = list(eligible_publishers)
+        self._total_accounts = len(publisher_list)
+        self._completed_count = 0
+        
+        self.stdout.write(
+            self.style.SUCCESS(
+                f'📊 Found {self._total_accounts} eligible publisher accounts\n'
+                f'🚀 Processing ALL accounts in parallel (no throttling!)\n'
+                f'💡 Theoretical capacity: {self._total_accounts * 2} requests/second'
+            )
+        )
+        
+        if self._total_accounts == 0:
             return {
                 'success': True,
                 'sync_id': 'no-accounts',
@@ -167,76 +211,80 @@ class Command(BaseCommand):
                 'total_records_updated': 0
             }
         
-        # Split publishers into batches
-        publisher_list = list(eligible_publishers)
-        batches = [publisher_list[i:i + batch_size] for i in range(0, len(publisher_list), batch_size)]
-        
-        self.stdout.write(f'📦 Processing {len(batches)} batches of up to {batch_size} accounts each')
-        
         start_time = time.time()
         results = []
         
-        # Ensure max_workers doesn't exceed API quota
-        actual_max_workers = min(max_workers, MAX_CONCURRENT_REQUESTS)
-        if max_workers > MAX_CONCURRENT_REQUESTS:
-            self.stdout.write(
-                self.style.WARNING(f'⚠️ Reducing max_workers from {max_workers} to {actual_max_workers} to comply with API quota')
-            )
+        # Use workers = min(max_workers, total_accounts) for efficiency
+        actual_workers = min(max_workers, self._total_accounts)
+        self.stdout.write(
+            f'🧵 Spawning {actual_workers} worker threads for {self._total_accounts} accounts'
+        )
         
-        with concurrent.futures.ThreadPoolExecutor(max_workers=actual_max_workers) as executor:
-            # Submit all batches with API quota compliance
-            future_to_batch = {
-                executor.submit(self._process_batch_with_quota, batch, date_from, date_to): batch                                                                                                            
-                for batch in batches
+        # Process ALL accounts in parallel - submit each account as individual task
+        with concurrent.futures.ThreadPoolExecutor(max_workers=actual_workers) as executor:
+            # Submit ALL accounts at once - no batching, no throttling
+            future_to_publisher = {
+                executor.submit(
+                    self._process_single_account, 
+                    publisher, 
+                    date_from, 
+                    date_to
+                ): publisher 
+                for publisher in publisher_list
             }
             
             # Collect results as they complete
-            for future in concurrent.futures.as_completed(future_to_batch):
-                batch = future_to_batch[future]
+            for future in concurrent.futures.as_completed(future_to_publisher):
+                publisher = future_to_publisher[future]
                 try:
-                    batch_results = future.result()
-                    results.extend(batch_results)
+                    result = future.result()
+                    results.append(result)
                     
-                    
-                    # Log progress
-                    completed = len(results)
-                    self.stdout.write(f'📊 Progress: {completed}/{total_accounts} accounts processed')
+                    # Update progress
+                    with self._worker_lock:
+                        self._completed_count += 1
+                        if self._completed_count % 10 == 0 or self._completed_count == self._total_accounts:
+                            elapsed = time.time() - start_time
+                            rate = self._completed_count / elapsed if elapsed > 0 else 0
+                            self.stdout.write(
+                                f'📊 Progress: {self._completed_count}/{self._total_accounts} '
+                                f'({self._completed_count * 100 // self._total_accounts}%) - '
+                                f'{rate:.1f} accounts/sec'
+                            )
                     
                 except Exception as e:
                     self.stdout.write(
-                        self.style.ERROR(f'❌ Batch processing failed: {str(e)}')
+                        self.style.ERROR(f'❌ {publisher.network_id}: {str(e)}')
                     )
-                    # Add failed results for this batch
-                    for publisher in batch:
-                        results.append({
-                            'account': publisher.network_id,
-                            'success': False,
-                            'error': str(e),
-                            'records_created': 0
-                        })
+                    results.append({
+                        'account': publisher.network_id,
+                        'success': False,
+                        'error': str(e),
+                        'records_created': 0
+                    })
         
         end_time = time.time()
         duration = end_time - start_time
-        
         
         # Calculate summary
         successful = sum(1 for r in results if r['success'])
         failed = len(results) - successful
         total_records = sum(r.get('records_created', 0) for r in results)
         
-        # Process unknown revenue after all accounts are processed
-        self.stdout.write('🔍 Processing unknown revenue for all accounts...')
-        try:
-            # Unknown revenue processing removed for Managed Inventory Publisher Dashboard
-            self.stdout.write('✅ Report fetching completed (unknown metrics processing removed)')
-        except Exception as e:
-            self.stdout.write(f'❌ Unknown revenue processing failed: {str(e)}')
-        
+        # Final summary
+        accounts_per_sec = self._total_accounts / duration if duration > 0 else 0
         self.stdout.write(
             self.style.SUCCESS(
-                f'⚡ Parallel processing completed in {duration:.2f} seconds\n'
-                f'📈 Results: {successful} successful, {failed} failed\n'
-                f'📊 Total records created: {total_records}'
+                f'\n{"="*60}\n'
+                f'⚡ PARALLEL PROCESSING COMPLETE\n'
+                f'{"="*60}\n'
+                f'⏱️  Duration: {duration:.1f} seconds ({duration/60:.1f} minutes)\n'
+                f'📈 Accounts processed: {self._total_accounts}\n'
+                f'✅ Successful: {successful}\n'
+                f'❌ Failed: {failed}\n'
+                f'📊 Records created: {total_records}\n'
+                f'🚀 Speed: {accounts_per_sec:.1f} accounts/second\n'
+                f'{"="*60}'
             )
         )
         
@@ -249,97 +297,73 @@ class Command(BaseCommand):
             'total_records_updated': 0
         }
 
-    def _process_batch_with_quota(self, batch, date_from, date_to):
-        """Process a batch of publisher accounts with API quota compliance"""
-        batch_results = []
+    def _process_single_account(self, publisher, date_from, date_to):
+        """
+        Process a single account with retry logic.
+        NO global throttling - each account has independent quota.
+        """
+        account_code = publisher.network_id
         
-        for i, publisher in enumerate(batch):
+        for attempt in range(MAX_QUOTA_RETRIES):
             try:
-                # Add delay between requests to respect API quota
-                if i > 0:  # Don't delay the first request
-                    time.sleep(REQUEST_DELAY)
-                
-                self.stdout.write(f'🔄 Processing {publisher.network_id} ({publisher.email})...')
-                
-                # Process single account with quota retry logic
-                result = self._process_account_with_quota_retry(
+                result = GAMReportService._process_publisher_network(
                     publisher, date_from, date_to
                 )
                 
-                batch_results.append({
-                    'account': publisher.network_id,
+                return {
+                    'account': account_code,
                     'success': True,
                     'records_created': result.get('records_created', 0),
                     'records_updated': result.get('records_updated', 0)
-                })
-                
-                self.stdout.write(
-                    f'✅ {publisher.network_id}: {result.get("records_created", 0)} records created'
-                )
+                }
                 
             except Exception as e:
                 error_message = str(e)
-                self.stdout.write(
-                    self.style.ERROR(f'❌ {publisher.network_id}: {error_message}')
-                )
                 
-                
-                batch_results.append({
-                    'account': publisher.network_id,
-                    'success': False,
-                    'error': error_message,
-                    'records_created': 0,
-                })
-        
-        return batch_results
-    
-    def _process_account_with_quota_retry(self, publisher, date_from, date_to):
-        """Process single account with quota error retry logic"""
-        for attempt in range(MAX_QUOTA_RETRIES):
-            try:
-                return GAMReportService._process_publisher_network(
-                    publisher, date_from, date_to
-                )
-            except Exception as e:
-                error_message = str(e)
-                
-                # Check if it's a quota error
+                # Check if it's a quota error - retry with backoff
                 if any(keyword in error_message.upper() for keyword in [
                     'EXCEEDED_QUOTA', 'QUOTA_ERROR', 'QUOTA_EXCEEDED', 'RATE_LIMIT'
                 ]):
                     if attempt < MAX_QUOTA_RETRIES - 1:
-                        wait_time = QUOTA_RETRY_DELAY * (2 ** attempt)  # Exponential backoff
+                        wait_time = QUOTA_RETRY_DELAY * (2 ** attempt)
                         self.stdout.write(
                             self.style.WARNING(
-                                f'⚠️ Quota exceeded for {publisher.network_id}, retrying in {wait_time}s (attempt {attempt + 1}/{MAX_QUOTA_RETRIES})'
+                                f'⚠️ {account_code}: Quota hit, retry {attempt + 1}/{MAX_QUOTA_RETRIES} in {wait_time}s'
                             )
                         )
                         time.sleep(wait_time)
                         continue
-                    else:
-                        self.stdout.write(
-                            self.style.ERROR(
-                                f'❌ Quota exceeded for {publisher.network_id} after {MAX_QUOTA_RETRIES} attempts'
-                            )
-                        )
                 
-                # If it's not a quota error or we've exhausted retries, raise the exception
-                raise e
-    
+                # Check if it's a service key error (auth error)
+                is_auth_error = any(keyword in error_message.lower() for keyword in [
+                    'service_account', 'authentication', 'unauthorized', 'forbidden',
+                    'invalid credentials', 'access denied', 'no networks to access'
+                ])
+                
+                return {
+                    'account': account_code,
+                    'success': False,
+                    'error': error_message,
+                    'records_created': 0,
+                    'is_auth_error': is_auth_error
+                }
+        
+        # Exhausted retries
+        return {
+            'account': account_code,
+            'success': False,
+            'error': f'Quota exceeded after {MAX_QUOTA_RETRIES} retries',
+            'records_created': 0,
+            'is_auth_error': False
+        }
+
     @classmethod
     def handle_cronjob(cls):
-        """
-        Enhanced cron job execution with monitoring and recovery
-        """
-        import os
-        from django.core.mail import send_mail
-        from django.conf import settings
-
+        """Enhanced cron job execution with monitoring and recovery"""
         start_time = timezone.now()
         log_file = '/tmp/gam_reports_cron.log'
 
         try:
-            # Set up enhanced logging for cron
             logging.basicConfig(
                 level=logging.INFO,
                 format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -349,107 +373,61 @@ class Command(BaseCommand):
                 ]
             )
 
-            logger.info(f'Starting automated GAM report fetch (Start: {start_time}, Log: {log_file})')
+            logger.info('🚀 Starting automated GAM report fetch via cron (OPTIMIZED)')
+            logger.info(f'📅 Start time: {start_time}')
 
-            # Check if another instance is running
-            lock_file = '/tmp/gam_reports_cron.lock'
-            if os.path.exists(lock_file):
-                logger.warning('Another cron job instance is already running. Skipping.')
-                return
+            command = cls()
+            command.handle(
+                date_from=None,
+                date_to=None,
+                days_back=1,
+                parallel=True,
+                max_workers=500,  # High parallelism
+            )
 
-            # Create lock file
-            with open(lock_file, 'w') as f:
-                f.write(str(os.getpid()))
+            end_time = timezone.now()
+            duration = (end_time - start_time).total_seconds()
 
-            try:
-                # Create command instance and execute with API quota compliance
-                command = cls()
-                command.handle(
-                    date_from=None,  # Use defaults (last 1 day for frequent runs)
-                    date_to=None,
-                    days_back=1,
-                    parallel=True,  # Enable parallel processing
-                    max_workers=MAX_CONCURRENT_REQUESTS,  # API quota compliant
-                    batch_size=50,  # Smaller batches for cron jobs
-                )
-
-                end_time = timezone.now()
-                duration = (end_time - start_time).total_seconds()
-
-                logger.info(f'Automated GAM report fetch completed successfully (Duration: {duration:.2f}s)')
-
-                # Clean up old log files (keep last 7 days)
-                cls._cleanup_old_logs()
-
-            finally:
-                # Remove lock file
-                if os.path.exists(lock_file):
-                    os.remove(lock_file)
+            logger.info(f'✅ Cron completed in {duration:.2f} seconds')
+            cls._cleanup_old_logs()
 
         except Exception as e:
             end_time = timezone.now()
             duration = (end_time - start_time).total_seconds()
-
-            logger.error(f'❌ Cron job failed after {duration:.2f} seconds: {str(e)}', exc_info=True)
-
-            # Send alert email if configured
+            logger.error(f'❌ Cron failed after {duration:.2f}s: {str(e)}', exc_info=True)
             cls._send_failure_alert(str(e), duration)
-
-            # Remove lock file on failure
-            lock_file = '/tmp/gam_reports_cron.lock'
-            if os.path.exists(lock_file):
-                os.remove(lock_file)
-
             raise
 
     @classmethod
     def _cleanup_old_logs(cls):
         """Clean up old log files"""
         import glob
-        import time
 
         try:
             log_pattern = '/tmp/gam_reports_cron*.log'
             log_files = glob.glob(log_pattern)
-
-            # Keep files from last 7 days
             cutoff_time = time.time() - (7 * 24 * 60 * 60)
 
             for log_file in log_files:
                 if os.path.getmtime(log_file) < cutoff_time:
                     os.remove(log_file)
-                    logger.debug(f'Cleaned up old log file: {log_file}')
+                    logger.info(f'🗑️ Cleaned up: {log_file}')
 
         except Exception as e:
-            logger.warning(f'Failed to cleanup old logs: {e}')
+            logger.warning(f'Failed to cleanup logs: {e}')
 
     @classmethod
     def _send_failure_alert(cls, error_message, duration):
         """Send failure alert email if configured"""
         try:
             if hasattr(settings, 'EMAIL_HOST_USER') and settings.EMAIL_HOST_USER:
-                admin_emails = [settings.EMAIL_HOST_USER]  # Or configure ADMIN_EMAILS
-
-                subject = 'GAM Reports Cron Job Failed'
-                message = f"""
-GAM Reports cron job failed:
-
-Error: {error_message}
-Duration: {duration:.2f} seconds
-Time: {timezone.now()}
-
-Please check the logs for more details.
-                """
-
                 send_mail(
-                    subject,
-                    message,
+                    'GAM Reports Cron Job Failed',
+                    f'Error: {error_message}\nDuration: {duration:.2f}s\nTime: {timezone.now()}',
                     settings.EMAIL_HOST_USER,
-                    admin_emails,
+                    [settings.EMAIL_HOST_USER],
                     fail_silently=True
                 )
-
-                logger.info('📧 Failure alert email sent')
-
+                logger.info('📧 Failure alert sent')
         except Exception as e:
-            logger.warning(f'Failed to send failure alert: {e}')
+            logger.warning(f'Failed to send alert: {e}')
