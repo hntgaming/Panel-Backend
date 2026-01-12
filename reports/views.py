@@ -806,10 +806,11 @@ class UnifiedReportsQueryView(APIView):
             if filter_key == 'parent_network':
                 queryset = queryset.filter(parent_network_code__in=filter_values)
             elif filter_key == 'publisher':
-                # Filter by publisher network_id
-                queryset = queryset.filter(parent_network_code__in=filter_values)
+                # Filter by publisher's child_network_code (their network_id)
+                queryset = queryset.filter(child_network_code__in=filter_values)
             elif filter_key == 'child_network':
-                queryset = queryset.filter(parent_network_code__in=filter_values)
+                # Filter by child_network_code - this is the publisher's network ID
+                queryset = queryset.filter(child_network_code__in=filter_values)
             elif filter_key == 'dimension_type':
                 queryset = queryset.filter(dimension_type__in=filter_values)
         
