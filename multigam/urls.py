@@ -13,7 +13,7 @@ def api_root(request):
     API root endpoint - provides API information
     """
     return JsonResponse({
-        'message': 'Welcome to Managed Inventory Publisher Dashboard API',
+        'message': 'Welcome to H&T GAMING - Managed Inventory API',
         'version': '1.0',
         'endpoints': {
             'authentication': '/api/auth/',

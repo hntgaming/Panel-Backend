@@ -20,7 +20,7 @@ from reports.services import GAMReportService
 logger = logging.getLogger(__name__)
 
 # ============================================================================
-# OPTIMIZED PARALLEL PROCESSING SETTINGS (From GAM Sentinel)
+# OPTIMIZED PARALLEL PROCESSING SETTINGS
 # ============================================================================
 # Google Ad Manager API: 2 requests/second PER ACCOUNT (not global!)
 # This means each account has independent quota
@@ -173,7 +173,7 @@ class Command(BaseCommand):
         """
         Process ALL accounts in TRUE PARALLEL - no global throttling!
         Each account has its own independent API quota (2 req/sec per account).
-        Optimized version from GAM Sentinel.
+        Optimized parallel processing for maximum efficiency.
         """
         from accounts.models import User
         from core.models import StatusChoices

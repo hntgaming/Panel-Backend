@@ -589,11 +589,12 @@ class GAMReportService:
                     for dim_col in (
                         'SITE_NAME', 'AD_UNIT_NAME', 'MOBILE_APP_NAME',
                         'DEVICE_CATEGORY_NAME', 'COUNTRY_NAME',
-                        'MOBILE_CARRIER_NAME', 'CARRIER_NAME', 'BROWSER_NAME'
+                        'MOBILE_CARRIER_NAME', 'CARRIER_NAME', 'BROWSER_NAME',
+                        'INVENTORY_FORMAT', 'INVENTORY_FORMAT_NAME'
                     ):
                         if dim_col in row_dict:
                             val = str(row_dict.get(dim_col) or '').strip().lower()
-                            if val == 'total':
+                            if val in ('total', 'totals', ''):
                                 raise StopIteration
                 except StopIteration:
                     # Skip this totals row

@@ -33,7 +33,7 @@ def send_welcome_email_with_reset_link(user):
     text_content = f"""
 Hi {user.get_full_name() or user.username},
 
-Welcome to H&T GAMING Publisher Platform!
+Welcome to H&T GAMING's Managed Inventory Publisher Platform!
 
 You've been granted access to our comprehensive Google Ad Manager integration system, designed to maximize your revenue through advanced programmatic advertising solutions.
 
@@ -71,17 +71,15 @@ This activation link is valid for 24 hours. If you didn't request this invitatio
 Ready to unlock the full potential of programmatic advertising? Click the link above to activate your account and start maximizing your ad revenue today!
 
 Best regards,
-H&T GAMING Team
+The H&T GAMING Team
 
 ---
-Dashboard: https://publisher.hntgaming.me
-Website: https://hntgaming.me
 Support: ManagedInventory@hntgaming.me
-© 2025 H&T GAMING. All rights reserved.
+© {str(__import__('datetime').datetime.now().year)} H&T GAMING. All rights reserved.
     """
 
     # Create email
-    subject = "🚀 Welcome to H&T GAMING Publisher Platform"
+    subject = "🚀 Welcome to H&T GAMING - Managed Inventory"
     from_email = settings.DEFAULT_FROM_EMAIL
     to_email = [user.email]
 

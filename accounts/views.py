@@ -486,10 +486,11 @@ def update_partner_permissions(request, user_id):
     PATCH /api/auth/users/<user_id>/permissions/
     {
         "permissions": [
-            { "permission": "manage_mcm_invites", "parent_gam_network": 1 },
-            { "permission": "verify_accounts" }
+            { "permission": "reports" },
+            { "permission": "settings" }
         ]
     }
+    Simplified for Managed Inventory Publisher Dashboard - no parent_gam_network needed
     """
     try:
         user = User.objects.get(id=user_id, role='publisher')
@@ -504,23 +505,14 @@ def update_partner_permissions(request, user_id):
 
     new_permissions = []
     for item in permission_items:
-        permission = item.get("permission")
-        parent_gam_id = item.get("parent_gam_network")
+        permission = item.get("permission") if isinstance(item, dict) else item
 
         if permission not in valid_permissions:
             return Response({"error": f"Invalid permission: {permission}"}, status=400)
 
-        # Simplified for managed inventory - no GAMNetwork model needed
-        # MCM invitations are handled via GAM API directly
-        if permission == 'mcm_invites':
-            # For managed inventory, we don't need parent_gam_network
-            # The system uses the parent network from settings
-            pass
-
         new_permissions.append(PublisherPermission(
             user=user,
-            permission=permission,
-            parent_gam_network=parent_network
+            permission=permission
         ))
 
     # Delete existing permissions

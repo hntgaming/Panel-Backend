@@ -498,7 +498,7 @@ def realtime_ivt_check_view(request):
         if child_code:
             dim_qs = dim_qs.filter(child_network_code=child_code)
         if not request.user.is_admin_user:
-            # Publisher users see data based on their network_id (as child_network_code) (as child_network_code)
+            # Publisher users see data based on their network_id (as child_network_code)
             if hasattr(request.user, 'network_id') and request.user.network_id:
                 dim_qs = dim_qs.filter(child_network_code=request.user.network_id)
             else:
@@ -509,9 +509,10 @@ def realtime_ivt_check_view(request):
         top_imp = dim_qs.order_by('-impressions').values_list('impressions', flat=True).first() or 0
         return float(top_imp) / float(total_imp)
 
-    carrier_share = top_share('carrier')
+    # Check site and country concentration (carrier removed for Managed Inventory)
+    site_share = top_share('site')
     country_share = top_share('country')
-    flags['carrier_concentration'] = carrier_share > 0.9
+    flags['site_concentration'] = site_share > 0.9
     flags['country_concentration'] = country_share > 0.9
 
     risk_score = 100

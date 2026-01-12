@@ -14,7 +14,7 @@ class AdsTxtChecker:
     """
     
     TIMEOUT = 10  # seconds
-    USER_AGENT = 'Mozilla/5.0 (compatible; ManagedInventory/1.0; +https://hntgaming.me)'
+    USER_AGENT = 'Mozilla/5.0 (compatible; HnTGaming/1.0; +https://hntgaming.me)'
     
     @staticmethod
     def get_ads_txt_url(site_url):
