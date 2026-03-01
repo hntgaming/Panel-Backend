@@ -159,14 +159,15 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
 
             for item in permissions_data:
                 permission = item['permission']
-                
-                # Create permission without parent_gam_network (simplified for managed inventory)
                 PublisherPermission.objects.create(
                     user=user,
                     permission=permission
                 )
 
-            send_welcome_email_with_reset_link(user)
+            try:
+                send_welcome_email_with_reset_link(user)
+            except Exception as e:
+                logger.error(f"Welcome email failed for {user.email}: {e}")
 
         return user
 
