@@ -74,7 +74,7 @@ EMAIL_PORT = 465
 EMAIL_USE_SSL = True
 EMAIL_USE_TLS = False  # Important: must be False when using SSL/465
 EMAIL_HOST_USER = config('EMAIL_HOST_USER', default='notification@mail.hntgaming.me')
-EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default='fqho jbnd tedc dzhd')  # This must be an App Password
+EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default='')
 DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', default=EMAIL_HOST_USER)
 
 
@@ -214,8 +214,8 @@ if DEBUG:
 # =====================================================================
 
 SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(days=15),
-    'REFRESH_TOKEN_LIFETIME': timedelta(days=30),
+    'ACCESS_TOKEN_LIFETIME': timedelta(days=1),
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
     'ROTATE_REFRESH_TOKENS': True,
     'BLACKLIST_AFTER_ROTATION': True,
     'UPDATE_LAST_LOGIN': True,

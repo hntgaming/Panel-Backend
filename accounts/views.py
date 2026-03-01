@@ -333,58 +333,30 @@ def user_dashboard_view(request):
     Enhanced dashboard endpoint with role-based data
     GET /api/auth/dashboard/
     """
-    from .rbac_service import RBACService
-    
     user = request.user
     
-    # Get user scope for data filtering
-    scope = RBACService.get_user_scope(user)
-    
-    # Basic dashboard data
     dashboard_data = {
-        'message': f'Welcome to GAM Platform, {user.get_full_name()}!',
+        'message': f'Welcome, {user.get_full_name()}!',
         'user': UserProfileSerializer(user).data,
         'user_role': user.role,
         'is_admin': user.role.upper() == 'ADMIN',
     }
     
-    # Add role-specific data
     if user.role.upper() == 'ADMIN':
-        # Admin sees all platform data
         dashboard_data['platform_stats'] = {
             'total_users': User.objects.count(),
             'active_users': User.objects.filter(status='active').count(),
             'admin_users': User.objects.filter(role='admin').count(),
             'publisher_users': User.objects.filter(role='publisher').count(),
         }
-        dashboard_data['admin_features'] = {
-            'can_manage_all_networks': True,
-            'can_send_mcm_invitations': True,
-            'can_manage_users': True,
-            'can_configure_alerts': True,
-        }
-    elif user.role.upper() == 'PARENT':
-        # Parent sees data for their network only
-        parent_network_id = scope.get('parent_network_id')
-        if parent_network_id:
-            # Simplified for managed inventory - no parent network logic
-            child_networks = []
-            
-            dashboard_data['network_stats'] = {
-                'network_name': 'Managed Inventory Network',
-                'total_child_networks': 0,
-                'active_child_networks': 0,
-                'total_publishers': User.objects.filter(role='publisher').count(),  # All publishers for now
-            }
     elif user.role.upper() == 'PUBLISHER':
-        # Partner sees only their assigned data
-        publisher_ids = scope.get('publisher_ids', [])
-        assigned_count = len(publisher_ids) if publisher_ids is not None else 0
-        effective_permissions = RBACService.get_effective_permissions(user)
+        publisher_permissions = list(
+            PublisherPermission.objects.filter(user=user).values_list('permission', flat=True)
+        )
         dashboard_data['partner_stats'] = {
-            'assigned_accounts': assigned_count,
-            'accessible_reports': 1 if 'reports' in effective_permissions else 0,
-            'managed_websites': 0,  # Will be populated from actual assignments
+            'assigned_accounts': 1,
+            'accessible_reports': 1 if 'reports' in publisher_permissions else 0,
+            'managed_websites': user.sites.count(),
         }
     
     return Response(dashboard_data, status=status.HTTP_200_OK)
@@ -536,14 +508,7 @@ def get_partner_permissions(request, user_id):
 
     permissions_data = []
     for perm in permissions:
-        entry = {"permission": perm.permission}
-        if perm.permission == PublisherPermission.PermissionChoices.MANAGED_ACCOUNTS and perm.parent_gam_network:
-            entry["parent_gam_network"] = {
-                "id": perm.parent_gam_network.id,
-                "network_code": perm.parent_gam_network.network_code,
-                "network_name": perm.parent_gam_network.network_name
-            }
-        permissions_data.append(entry)
+        permissions_data.append({"permission": perm.permission})
 
     return Response({
         "id": user.id,
@@ -644,29 +609,27 @@ def update_profile_view(request):
     """
     user = request.user
     
-    # Get data from request
-    full_name = request.data.get('full_name', '')
-    email = request.data.get('email', '')
-    phone = request.data.get('phone', '')
+    first_name = request.data.get('first_name', '').strip()
+    last_name = request.data.get('last_name', '').strip()
+    email = request.data.get('email', '').strip()
+    phone_number = request.data.get('phone_number', '').strip()
     
-    # Validate required fields
-    if not full_name or not email:
+    if not first_name or not email:
         return Response({
-            'error': 'Full name and email are required'
+            'error': 'First name and email are required'
         }, status=status.HTTP_400_BAD_REQUEST)
     
-    # Check if email is being changed and if it's already taken
     if email != user.email:
-        if User.objects.filter(email=email).exists():
+        if User.objects.filter(email__iexact=email).exists():
             return Response({
                 'error': 'Email already exists'
             }, status=status.HTTP_400_BAD_REQUEST)
-        user.email = email
+        user.email = email.lower()
     
-    # Update user fields
-    user.full_name = full_name
-    user.phone = phone
-    user.save()
+    user.first_name = first_name
+    user.last_name = last_name
+    user.phone_number = phone_number
+    user.save(update_fields=['first_name', 'last_name', 'email', 'phone_number'])
     
     return Response({
         'success': True,
