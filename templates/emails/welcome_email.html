@@ -1,475 +1,216 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Welcome to H&T GAMING - Managed Inventory</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
-            line-height: 1.6;
-            color: #1a1a1a;
-            background-color: #f5f5f7;
-            -webkit-font-smoothing: antialiased;
-            -moz-osx-font-smoothing: grayscale;
-        }
-        
-        .email-container {
-            max-width: 650px;
-            margin: 40px auto;
-            background-color: #ffffff;
-            border-radius: 16px;
-            box-shadow: 0 8px 32px rgba(36, 11, 80, 0.12);
-            overflow: hidden;
-        }
-        
-        .header {
-            background: linear-gradient(135deg, #240b50 0%, #4a1a8a 50%, #80d3f5 100%);
-            padding: 50px 40px;
-            text-align: center;
-            color: white;
-            position: relative;
-            overflow: hidden;
-        }
-        
-        .header::before {
-            content: '';
-            position: absolute;
-            top: -50%;
-            right: -50%;
-            width: 200%;
-            height: 200%;
-            background: radial-gradient(circle, rgba(128, 211, 245, 0.2) 0%, transparent 70%);
-            animation: pulse 8s ease-in-out infinite;
-        }
-        
-        @keyframes pulse {
-            0%, 100% { transform: scale(1); opacity: 0.3; }
-            50% { transform: scale(1.1); opacity: 0.5; }
-        }
-        
-        .logo {
-            font-size: 32px;
-            font-weight: 700;
-            margin-bottom: 12px;
-            letter-spacing: 0.5px;
-            position: relative;
-            z-index: 1;
-        }
-        
-        .tagline {
-            font-size: 17px;
-            opacity: 0.95;
-            font-weight: 400;
-            position: relative;
-            z-index: 1;
-        }
-        
-        .content {
-            padding: 45px 40px;
-        }
-        
-        .welcome-title {
-            font-size: 28px;
-            color: #240b50;
-            margin-bottom: 24px;
-            font-weight: 700;
-            line-height: 1.3;
-        }
-        
-        .welcome-text {
-            font-size: 16px;
-            color: #4a4a4a;
-            margin-bottom: 32px;
-            line-height: 1.75;
-        }
-        
-        .welcome-text strong {
-            color: #240b50;
-            font-weight: 600;
-        }
-        
-        .cta-button {
-            display: inline-block;
-            background: linear-gradient(135deg, #240b50 0%, #4a1a8a 100%);
-            color: white;
-            padding: 18px 40px;
-            text-decoration: none;
-            border-radius: 10px;
-            font-weight: 600;
-            font-size: 17px;
-            margin: 24px 0;
-            transition: all 0.3s ease;
-            box-shadow: 0 4px 16px rgba(36, 11, 80, 0.25);
-            letter-spacing: 0.3px;
-        }
-        
-        .cta-button:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(36, 11, 80, 0.35);
-        }
-        
-        .features {
-            background: linear-gradient(135deg, #f8f9ff 0%, #f0f4ff 100%);
-            padding: 35px;
-            margin: 35px 0;
-            border-radius: 12px;
-            border-left: 5px solid #240b50;
-        }
-        
-        .features-title {
-            font-size: 20px;
-            color: #240b50;
-            margin-bottom: 24px;
-            font-weight: 700;
-        }
-        
-        .feature-list {
-            list-style: none;
-            padding: 0;
-        }
-        
-        .feature-item {
-            display: flex;
-            align-items: flex-start;
-            margin-bottom: 16px;
-            font-size: 15px;
-            color: #4a4a4a;
-            line-height: 1.6;
-        }
-        
-        .feature-icon {
-            width: 24px;
-            height: 24px;
-            background: linear-gradient(135deg, #240b50 0%, #80d3f5 100%);
-            border-radius: 6px;
-            margin-right: 14px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: white;
-            font-size: 14px;
-            font-weight: bold;
-            flex-shrink: 0;
-            margin-top: 2px;
-        }
-        
-        .feature-category {
-            margin-top: 30px;
-            padding-top: 30px;
-            border-top: 2px solid rgba(36, 11, 80, 0.1);
-        }
-        
-        .feature-category-title {
-            font-size: 18px;
-            color: #240b50;
-            margin-bottom: 18px;
-            font-weight: 700;
-            display: flex;
-            align-items: center;
-        }
-        
-        .category-icon {
-            width: 28px;
-            height: 28px;
-            background: linear-gradient(135deg, #faa98f 0%, #ff8c6b 100%);
-            border-radius: 8px;
-            margin-right: 12px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: white;
-            font-size: 16px;
-        }
-        
-        .footer {
-            background: linear-gradient(135deg, #240b50 0%, #1a0838 100%);
-            color: #e0e0e0;
-            padding: 40px;
-            text-align: center;
-            font-size: 14px;
-        }
-        
-        .footer-links {
-            margin: 24px 0;
-        }
-        
-        .footer-links a {
-            color: #80d3f5;
-            text-decoration: none;
-            margin: 0 18px;
-            font-weight: 500;
-            transition: color 0.2s ease;
-        }
-        
-        .footer-links a:hover {
-            color: #b9eacc;
-            text-decoration: underline;
-        }
-        
-        .security-note {
-            background: linear-gradient(135deg, #fff5f0 0%, #ffe8e0 100%);
-            border: 2px solid #faa98f;
-            border-radius: 10px;
-            padding: 18px;
-            margin: 28px 0;
-            font-size: 14px;
-            color: #8b4513;
-        }
-        
-        .security-note strong {
-            color: #240b50;
-        }
-        
-        .stats {
-            display: flex;
-            justify-content: space-around;
-            margin: 35px 0;
-            text-align: center;
-            padding: 25px 0;
-            background: linear-gradient(135deg, #f8f9ff 0%, #ffffff 100%);
-            border-radius: 12px;
-        }
-        
-        .stat-item {
-            flex: 1;
-        }
-        
-        .stat-number {
-            font-size: 28px;
-            font-weight: 700;
-            background: linear-gradient(135deg, #240b50 0%, #80d3f5 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-            display: block;
-            margin-bottom: 6px;
-        }
-        
-        .stat-label {
-            font-size: 12px;
-            color: #6a6a6a;
-            text-transform: uppercase;
-            letter-spacing: 1.2px;
-            font-weight: 600;
-        }
-        
-        .highlight-box {
-            background: linear-gradient(135deg, #b9eacc 0%, #e8f8f0 100%);
-            border: 2px solid #80d3f5;
-            border-radius: 12px;
-            padding: 25px;
-            margin: 30px 0;
-        }
-        
-        .highlight-box-title {
-            font-size: 18px;
-            color: #240b50;
-            margin-bottom: 16px;
-            font-weight: 700;
-        }
-        
-        .highlight-box-text {
-            font-size: 15px;
-            color: #2a2a2a;
-            line-height: 1.7;
-        }
-        
-        @media (max-width: 600px) {
-            .email-container {
-                margin: 20px 10px;
-                border-radius: 12px;
-            }
-            
-            .header, .content, .footer {
-                padding: 30px 25px;
-            }
-            
-            .stats {
-                flex-direction: column;
-                gap: 24px;
-            }
-            
-            .welcome-title {
-                font-size: 24px;
-            }
-            
-            .footer-links a {
-                display: block;
-                margin: 8px 0;
-            }
-        }
-    </style>
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <title>Welcome to H&T GAMING</title>
+    <!--[if mso]>
+    <style>table,td{font-family:Arial,sans-serif!important}</style>
+    <![endif]-->
 </head>
-<body>
-    <div class="email-container">
-        <!-- Header -->
-        <div class="header">
-            <div class="logo">H&T GAMING</div>
-            <div class="tagline">Managed Inventory</div>
-        </div>
-        
-        <!-- Main Content -->
-        <div class="content">
-            <h1 class="welcome-title">Welcome to H&T GAMING - Managed Inventory</h1>
-            
-            <p class="welcome-text">
-                Hi <strong>{{ user_name }}</strong>,<br><br>
-                Welcome to <strong>H&T GAMING's</strong> Managed Inventory Publisher Platform! You've been granted access to our comprehensive Google Ad Manager integration system, designed to maximize your revenue through advanced programmatic advertising solutions.
-            </p>
-            
+<body style="margin:0;padding:0;background-color:#0f0a1e;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;-webkit-font-smoothing:antialiased;">
+
+<!-- Preheader (hidden preview text) -->
+<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;">
+    Welcome to H&T GAMING — Activate your Managed Inventory Publisher Dashboard account.
+</div>
+
+<!-- Outer wrapper -->
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#0f0a1e;">
+<tr><td align="center" style="padding:32px 16px;">
+
+<!-- Email card -->
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;border-radius:16px;overflow:hidden;box-shadow:0 24px 48px rgba(0,0,0,0.4);">
+
+    <!-- Header gradient bar -->
+    <tr>
+        <td style="height:6px;background:linear-gradient(90deg,#7c3aed,#06b6d4,#10b981);font-size:0;line-height:0;">&nbsp;</td>
+    </tr>
+
+    <!-- Logo section -->
+    <tr>
+        <td style="background-color:#16112b;padding:40px 40px 32px;text-align:center;">
+            <!-- Logo mark -->
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center">
+            <tr>
+                <td style="width:56px;height:56px;background:linear-gradient(135deg,#7c3aed,#06b6d4);border-radius:14px;text-align:center;vertical-align:middle;">
+                    <span style="color:#ffffff;font-size:24px;font-weight:800;line-height:56px;">H</span>
+                </td>
+                <td style="padding-left:14px;">
+                    <span style="color:#ffffff;font-size:22px;font-weight:700;letter-spacing:0.5px;">H&T GAMING</span><br>
+                    <span style="color:#a78bfa;font-size:12px;font-weight:600;letter-spacing:2.5px;text-transform:uppercase;">Managed Inventory</span>
+                </td>
+            </tr>
+            </table>
+        </td>
+    </tr>
+
+    <!-- Main content -->
+    <tr>
+        <td style="background-color:#1e1839;padding:0 40px;">
+
+            <!-- Welcome greeting -->
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+            <tr><td style="padding:36px 0 0;">
+                <h1 style="margin:0 0 8px;font-size:26px;font-weight:700;color:#ffffff;line-height:1.3;">
+                    Welcome aboard, {{ user_name }}
+                </h1>
+                <p style="margin:0;font-size:15px;color:#a0a0b8;line-height:1.7;">
+                    You've been invited to the <span style="color:#c4b5fd;font-weight:600;">Managed Inventory Publisher Dashboard</span> — our enterprise platform for Google Ad Manager integration and programmatic revenue optimization.
+                </p>
+            </td></tr>
+            </table>
+
             <!-- CTA Button -->
-            <div style="text-align: center;">
-                <a href="{{ reset_url }}" class="cta-button">Activate Your Account & Get Started</a>
-            </div>
-            
-            <!-- Core Features Section -->
-            <div class="features">
-                <h3 class="features-title">Platform Capabilities</h3>
-                <ul class="feature-list">
-                    <li class="feature-item">
-                        <span class="feature-icon">📊</span>
-                        <span>Real-time revenue analytics and comprehensive reporting dashboards</span>
-                    </li>
-                    <li class="feature-item">
-                        <span class="feature-icon">📈</span>
-                        <span>Advanced GAM integration with MCM (Multiple Customer Management)</span>
-                    </li>
-                    <li class="feature-item">
-                        <span class="feature-icon">🔒</span>
-                        <span>Advanced security and secure payment management</span>
-                    </li>
-                    <li class="feature-item">
-                        <span class="feature-icon">⚡</span>
-                        <span>High-performance infrastructure with sub-second response times</span>
-                    </li>
-                </ul>
-                
-                <!-- Premium Demands Section -->
-                <div class="feature-category">
-                    <h3 class="feature-category-title">
-                        <span class="category-icon">💎</span>
-                        Premium Demand Partners
-                    </h3>
-                    <ul class="feature-list">
-                        <li class="feature-item">
-                            <span class="feature-icon">✓</span>
-                            <span>Access to premium programmatic demand sources including Google AdX, Google AdSense, and top-tier DSPs</span>
-                        </li>
-                        <li class="feature-item">
-                            <span class="feature-icon">✓</span>
-                            <span>Optimized demand stack with real-time bidding (RTB) and private marketplace (PMP) deals</span>
-                        </li>
-                        <li class="feature-item">
-                            <span class="feature-icon">✓</span>
-                            <span>Dynamic price floors and yield optimization for maximum revenue</span>
-                        </li>
-                    </ul>
-                </div>
-                
-                <!-- Header Bidding Section -->
-                <div class="feature-category">
-                    <h3 class="feature-category-title">
-                        <span class="category-icon">🎯</span>
-                        Header Bidding Integration
-                    </h3>
-                    <ul class="feature-list">
-                        <li class="feature-item">
-                            <span class="feature-icon">✓</span>
-                            <span>Prebid.js integration for simultaneous bid requests to multiple demand partners</span>
-                        </li>
-                        <li class="feature-item">
-                            <span class="feature-icon">✓</span>
-                            <span>Server-side header bidding (SSHB) support for reduced latency</span>
-                        </li>
-                        <li class="feature-item">
-                            <span class="feature-icon">✓</span>
-                            <span>Advanced bid management with timeout controls and price priority optimization</span>
-                        </li>
-                        <li class="feature-item">
-                            <span class="feature-icon">✓</span>
-                            <span>Real-time bid analytics and performance monitoring</span>
-                        </li>
-                    </ul>
-                </div>
-                
-                <!-- Video Ads Section -->
-                <div class="feature-category">
-                    <h3 class="feature-category-title">
-                        <span class="category-icon">🎬</span>
-                        Video Advertising Formats
-                    </h3>
-                    <ul class="feature-list">
-                        <li class="feature-item">
-                            <span class="feature-icon">✓</span>
-                            <span><strong>Instream Video Ads:</strong> Pre-roll, mid-roll, and post-roll video placements within video content players</span>
-                        </li>
-                        <li class="feature-item">
-                            <span class="feature-icon">✓</span>
-                            <span><strong>Outstream Video Ads:</strong> Standalone video units that play outside of video content (in-article, in-feed, floating players)</span>
-                        </li>
-                        <li class="feature-item">
-                            <span class="feature-icon">✓</span>
-                            <span>VAST/VPAID compliant video ad serving with full IAB standards support</span>
-                        </li>
-                        <li class="feature-item">
-                            <span class="feature-icon">✓</span>
-                            <span>Advanced video targeting, frequency capping, and viewability optimization</span>
-                        </li>
-                    </ul>
-                </div>
-            </div>
-            
-            <!-- Highlight Box -->
-            <div class="highlight-box">
-                <div class="highlight-box-title">🚀 Why Choose H&T GAMING?</div>
-                <div class="highlight-box-text">
-                    Our platform is built for publishers who demand the highest levels of performance, reliability, and revenue optimization. With our advanced AdTech stack, you'll have access to premium demand sources, cutting-edge header bidding technology, and comprehensive video ad solutions—all managed through an intuitive, powerful dashboard.
-                </div>
-            </div>
-            
-            <!-- Stats Section -->
-            <div class="stats">
-                <div class="stat-item">
-                    <span class="stat-number">99.9%</span>
-                    <span class="stat-label">Uptime SLA</span>
-                </div>
-                <div class="stat-item">
-                    <span class="stat-number">&lt;1s</span>
-                    <span class="stat-label">Response Time</span>
-                </div>
-                <div class="stat-item">
-                    <span class="stat-number">24/7</span>
-                    <span class="stat-label">Support</span>
-                </div>
-            </div>
-            
-            <!-- Security Note -->
-            <div class="security-note">
-                <strong>🔐 Security Notice:</strong> This activation link is valid for 24 hours. If you didn't request this invitation, please ignore this email or contact our support team immediately at <a href="mailto:ManagedInventory@hntgaming.me" style="color: #240b50; font-weight: 600;">ManagedInventory@hntgaming.me</a>.
-            </div>
-            
-            <p class="welcome-text" style="margin-top: 32px;">
-                Ready to unlock the full potential of programmatic advertising? Click the button above to activate your account and start maximizing your ad revenue today!
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+            <tr><td style="padding:32px 0;" align="center">
+                <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                    <td style="background:linear-gradient(135deg,#7c3aed,#6d28d9);border-radius:12px;box-shadow:0 4px 24px rgba(124,58,237,0.4);">
+                        <a href="{{ reset_url }}" target="_blank" style="display:inline-block;padding:16px 48px;color:#ffffff;font-size:16px;font-weight:700;text-decoration:none;letter-spacing:0.3px;">
+                            Activate Your Account &rarr;
+                        </a>
+                    </td>
+                </tr>
+                </table>
+            </td></tr>
+            </table>
+
+            <!-- Divider -->
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+            <tr><td style="border-top:1px solid #2d2553;font-size:0;line-height:0;height:1px;">&nbsp;</td></tr>
+            </table>
+
+            <!-- Features grid (2-column) -->
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+            <tr><td style="padding:32px 0 0;">
+                <p style="margin:0 0 20px;font-size:11px;font-weight:700;color:#06b6d4;letter-spacing:2.5px;text-transform:uppercase;">What You Get Access To</p>
+            </td></tr>
+            </table>
+
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+            <tr>
+                <!-- Feature 1 -->
+                <td width="50%" style="padding:0 8px 16px 0;vertical-align:top;">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#241e42;border-radius:10px;">
+                    <tr><td style="padding:20px;">
+                        <div style="width:36px;height:36px;background:linear-gradient(135deg,#7c3aed,#a78bfa);border-radius:8px;text-align:center;line-height:36px;font-size:16px;margin-bottom:12px;">&#128200;</div>
+                        <p style="margin:0 0 4px;font-size:14px;font-weight:700;color:#ffffff;">Revenue Analytics</p>
+                        <p style="margin:0;font-size:12px;color:#8b8ba0;line-height:1.5;">Real-time dashboards with comprehensive reporting and insights.</p>
+                    </td></tr>
+                    </table>
+                </td>
+                <!-- Feature 2 -->
+                <td width="50%" style="padding:0 0 16px 8px;vertical-align:top;">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#241e42;border-radius:10px;">
+                    <tr><td style="padding:20px;">
+                        <div style="width:36px;height:36px;background:linear-gradient(135deg,#06b6d4,#22d3ee);border-radius:8px;text-align:center;line-height:36px;font-size:16px;margin-bottom:12px;">&#128176;</div>
+                        <p style="margin:0 0 4px;font-size:14px;font-weight:700;color:#ffffff;">Premium Demand</p>
+                        <p style="margin:0;font-size:12px;color:#8b8ba0;line-height:1.5;">Google AdX, AdSense, and top-tier DSPs with dynamic price floors.</p>
+                    </td></tr>
+                    </table>
+                </td>
+            </tr>
+            <tr>
+                <!-- Feature 3 -->
+                <td width="50%" style="padding:0 8px 16px 0;vertical-align:top;">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#241e42;border-radius:10px;">
+                    <tr><td style="padding:20px;">
+                        <div style="width:36px;height:36px;background:linear-gradient(135deg,#10b981,#34d399);border-radius:8px;text-align:center;line-height:36px;font-size:16px;margin-bottom:12px;">&#9889;</div>
+                        <p style="margin:0 0 4px;font-size:14px;font-weight:700;color:#ffffff;">Header Bidding</p>
+                        <p style="margin:0;font-size:12px;color:#8b8ba0;line-height:1.5;">Prebid.js with server-side bidding and real-time bid analytics.</p>
+                    </td></tr>
+                    </table>
+                </td>
+                <!-- Feature 4 -->
+                <td width="50%" style="padding:0 0 16px 8px;vertical-align:top;">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#241e42;border-radius:10px;">
+                    <tr><td style="padding:20px;">
+                        <div style="width:36px;height:36px;background:linear-gradient(135deg,#f59e0b,#fbbf24);border-radius:8px;text-align:center;line-height:36px;font-size:16px;margin-bottom:12px;">&#127916;</div>
+                        <p style="margin:0 0 4px;font-size:14px;font-weight:700;color:#ffffff;">Video Ads</p>
+                        <p style="margin:0;font-size:12px;color:#8b8ba0;line-height:1.5;">Instream &amp; outstream with VAST/VPAID and viewability optimization.</p>
+                    </td></tr>
+                    </table>
+                </td>
+            </tr>
+            </table>
+
+            <!-- Divider -->
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+            <tr><td style="padding:8px 0;border-top:1px solid #2d2553;font-size:0;line-height:0;height:1px;">&nbsp;</td></tr>
+            </table>
+
+            <!-- Stats row -->
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+            <tr>
+                <td width="33%" style="padding:24px 0;text-align:center;">
+                    <p style="margin:0;font-size:24px;font-weight:800;color:#7c3aed;">99.9%</p>
+                    <p style="margin:4px 0 0;font-size:10px;font-weight:700;color:#6b6b80;letter-spacing:1.5px;text-transform:uppercase;">Uptime</p>
+                </td>
+                <td width="33%" style="padding:24px 0;text-align:center;border-left:1px solid #2d2553;border-right:1px solid #2d2553;">
+                    <p style="margin:0;font-size:24px;font-weight:800;color:#06b6d4;">&lt;1s</p>
+                    <p style="margin:4px 0 0;font-size:10px;font-weight:700;color:#6b6b80;letter-spacing:1.5px;text-transform:uppercase;">Latency</p>
+                </td>
+                <td width="33%" style="padding:24px 0;text-align:center;">
+                    <p style="margin:0;font-size:24px;font-weight:800;color:#10b981;">24/7</p>
+                    <p style="margin:4px 0 0;font-size:10px;font-weight:700;color:#6b6b80;letter-spacing:1.5px;text-transform:uppercase;">Support</p>
+                </td>
+            </tr>
+            </table>
+
+            <!-- Security notice -->
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+            <tr><td style="padding:24px 0 36px;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#1a1535;border:1px solid #2d2553;border-left:3px solid #f59e0b;border-radius:8px;">
+                <tr><td style="padding:16px 20px;">
+                    <p style="margin:0;font-size:13px;color:#a0a0b8;line-height:1.6;">
+                        <span style="color:#f59e0b;font-weight:700;">Security:</span> This activation link expires in 24 hours. If you didn't request this, contact
+                        <a href="mailto:ManagedInventory@hntgaming.me" style="color:#06b6d4;text-decoration:none;font-weight:600;">ManagedInventory@hntgaming.me</a>
+                    </p>
+                </td></tr>
+                </table>
+            </td></tr>
+            </table>
+
+        </td>
+    </tr>
+
+    <!-- Footer -->
+    <tr>
+        <td style="background-color:#120e24;padding:32px 40px;text-align:center;">
+            <!-- Footer links -->
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center">
+            <tr>
+                <td style="padding:0 16px;">
+                    <a href="https://publisher.hntgaming.me" style="color:#7c3aed;font-size:13px;font-weight:600;text-decoration:none;">Dashboard</a>
+                </td>
+                <td style="color:#2d2553;">|</td>
+                <td style="padding:0 16px;">
+                    <a href="https://hntgaming.me" style="color:#7c3aed;font-size:13px;font-weight:600;text-decoration:none;">Website</a>
+                </td>
+                <td style="color:#2d2553;">|</td>
+                <td style="padding:0 16px;">
+                    <a href="mailto:ManagedInventory@hntgaming.me" style="color:#7c3aed;font-size:13px;font-weight:600;text-decoration:none;">Support</a>
+                </td>
+            </tr>
+            </table>
+
+            <p style="margin:20px 0 0;font-size:12px;color:#4a4a60;line-height:1.6;">
+                &copy; {% now "Y" %} H&T GAMING. All rights reserved.
             </p>
-        </div>
-        
-        <!-- Footer -->
-        <div class="footer">
-            <div class="footer-links">
-                <a href="https://publisher.hntgaming.me">Dashboard</a>
-                <a href="https://hntgaming.me">Website</a>
-                <a href="mailto:ManagedInventory@hntgaming.me">Support</a>
-            </div>
-            <p style="margin-top: 20px; opacity: 0.9;">&copy; {% now "Y" %} H&T GAMING. All rights reserved.</p>
-            <p style="margin-top: 12px; font-size: 13px; opacity: 0.8;">This email was sent to {{ user_email }}. If you have any questions, please contact our support team.</p>
-        </div>
-    </div>
+            <p style="margin:8px 0 0;font-size:11px;color:#3a3a50;">
+                Sent to {{ user_email }}
+            </p>
+        </td>
+    </tr>
+
+</table>
+<!-- /Email card -->
+
+</td></tr>
+</table>
+<!-- /Outer wrapper -->
+
 </body>
 </html>
