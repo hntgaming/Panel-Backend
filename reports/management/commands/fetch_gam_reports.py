@@ -177,19 +177,27 @@ class Command(BaseCommand):
         """
         from accounts.models import User
         from core.models import StatusChoices
+        from itertools import chain
         
-        # Get eligible publishers with active status and network_id
-        eligible_publishers = User.objects.filter(
+        mcm_publishers = User.objects.filter(
             role=User.UserRole.PUBLISHER,
             status=StatusChoices.ACTIVE,
+            gam_type='mcm',
             network_id__isnull=False
         ).exclude(network_id='')
         
-        # Filter by specific network if provided
-        if network_id:
-            eligible_publishers = eligible_publishers.filter(network_id=network_id)
+        oo_publishers = User.objects.filter(
+            role=User.UserRole.PUBLISHER,
+            status=StatusChoices.ACTIVE,
+            gam_type='o_and_o',
+            site_url__isnull=False
+        ).exclude(site_url='')
         
-        publisher_list = list(eligible_publishers)
+        if network_id:
+            mcm_publishers = mcm_publishers.filter(network_id=network_id)
+            oo_publishers = oo_publishers.none()
+        
+        publisher_list = list(chain(mcm_publishers, oo_publishers))
         self._total_accounts = len(publisher_list)
         self._completed_count = 0
         
@@ -253,11 +261,12 @@ class Command(BaseCommand):
                             )
                     
                 except Exception as e:
+                    acct_label = publisher.network_id or publisher.site_url or publisher.email
                     self.stdout.write(
-                        self.style.ERROR(f'❌ {publisher.network_id}: {str(e)}')
+                        self.style.ERROR(f'❌ {acct_label}: {str(e)}')
                     )
                     results.append({
-                        'account': publisher.network_id,
+                        'account': acct_label,
                         'success': False,
                         'error': str(e),
                         'records_created': 0
@@ -302,7 +311,7 @@ class Command(BaseCommand):
         Process a single account with retry logic.
         NO global throttling - each account has independent quota.
         """
-        account_code = publisher.network_id
+        account_code = publisher.network_id or publisher.site_url or publisher.email
         
         for attempt in range(MAX_QUOTA_RETRIES):
             try:
