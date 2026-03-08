@@ -497,8 +497,9 @@ class GAMReportService:
     def _fetch_child_dimension_reports(client, invitation, dimension_key, date_from, date_to):
         """
         Fetch reports using real GAM API.
-        MCM (MANAGE_INVENTORY): filters by CHILD_NETWORK_CODE.
-        O&O (OWNED_AND_OPERATED): filters by SITE_NAME (domain).
+        MCM (MANAGE_INVENTORY): filters by CHILD_NETWORK_CODE in API query.
+        O&O (OWNED_AND_OPERATED): fetches full report with SITE_NAME dimension,
+            post-filtered by publisher domain in _process_report_data.
         """
 
         try:
@@ -508,19 +509,8 @@ class GAMReportService:
             is_oo = getattr(invitation, 'gam_type', None) == 'o_and_o' or invitation.delegation_type == 'OWNED_AND_OPERATED'
             
             if is_oo:
-                # O&O: ensure SITE_NAME is in dimensions and filter by it
                 if "SITE_NAME" not in dimensions:
                     dimensions.append("SITE_NAME")
-                site_domain = getattr(invitation, 'site_domain', invitation.child_network_code)
-                filter_statement = {
-                    'query': 'WHERE SITE_NAME = :siteName',
-                    'values': [
-                        {
-                            'key': 'siteName',
-                            'value': {'xsi_type': 'TextValue', 'value': str(site_domain)}
-                        }
-                    ]
-                }
             elif invitation.delegation_type == 'MANAGE_INVENTORY':
                 if "CHILD_NETWORK_CODE" not in dimensions:
                     dimensions.append("CHILD_NETWORK_CODE")
@@ -662,16 +652,19 @@ class GAMReportService:
     @staticmethod
     def _process_report_data(headers, report_data, invitation, dimension_key, date_from, date_to):
         """
-        REPLICATED: Process report data for each dimension value separately
+        Process report data for each dimension value separately.
+        For O&O publishers, post-filters rows by matching SITE_NAME to the publisher's domain.
         """
         processed_records = []
         
-        # Process each row as a separate record
+        is_oo = getattr(invitation, 'gam_type', None) == 'o_and_o' or invitation.delegation_type == 'OWNED_AND_OPERATED'
+        oo_domain = getattr(invitation, 'site_domain', '').lower().strip() if is_oo else ''
+        
         for row_data in report_data:
             try:
                 row_dict = dict(zip(headers, row_data))
 
-                # Skip GAM totals row if present in CSV (dimension value equals 'Total')
+                # Skip GAM totals row if present in CSV
                 try:
                     for dim_col in (
                         'SITE_NAME', 'AD_UNIT_NAME', 'MOBILE_APP_NAME',
@@ -684,8 +677,13 @@ class GAMReportService:
                             if val in ('total', 'totals', ''):
                                 raise StopIteration
                 except StopIteration:
-                    # Skip this totals row
                     continue
+                
+                # O&O post-filter: only keep rows matching the publisher's site domain
+                if is_oo and oo_domain:
+                    row_site = str(row_dict.get('SITE_NAME', '')).lower().strip()
+                    if not row_site or oo_domain not in row_site:
+                        continue
                 
                 # Get dimension value
                 dimension_value = None
