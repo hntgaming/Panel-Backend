@@ -109,22 +109,32 @@ class GAMReportService:
         logger.info(f"Starting GAM report sync {sync_id} for {date_from} to {date_to}")
         
         try:
-            # Get eligible publishers with active status and network_id
-            # For managed inventory, we use User model with network_id
             from core.models import StatusChoices
-            eligible_publishers = User.objects.filter(
+            
+            # MCM publishers: require network_id
+            mcm_publishers = User.objects.filter(
                 role=User.UserRole.PUBLISHER,
                 status=StatusChoices.ACTIVE,
+                gam_type='mcm',
                 network_id__isnull=False
             ).exclude(network_id='')
             
+            # O&O publishers: require site_url (no network_id needed)
+            oo_publishers = User.objects.filter(
+                role=User.UserRole.PUBLISHER,
+                status=StatusChoices.ACTIVE,
+                gam_type='o_and_o',
+                site_url__isnull=False
+            ).exclude(site_url='')
+            
+            from itertools import chain
+            eligible_publishers = list(chain(mcm_publishers, oo_publishers))
             
             successful_count = 0
             failed_count = 0
             total_records_created = 0
             total_records_updated = 0
             
-            # Process each publisher network individually
             for publisher in eligible_publishers:
                 try:
                     
@@ -178,63 +188,58 @@ class GAMReportService:
     @staticmethod
     def _process_publisher_network(publisher, date_from, date_to):
         """
-        Process a single publisher network using the parent network YAML file
-        Works with Publisher User model instead of MCM Invitation
+        Process a single publisher network.
+        MCM: uses parent YAML + CHILD_NETWORK_CODE filter.
+        O&O: uses O&O YAML + SITE_NAME filter (no child network code).
         """
+        publisher_gam_type = getattr(publisher, 'gam_type', 'mcm') or 'mcm'
+        
+        if publisher_gam_type == 'o_and_o':
+            return GAMReportService._process_oo_publisher(publisher, date_from, date_to)
+        
+        return GAMReportService._process_mcm_publisher(publisher, date_from, date_to)
+
+    @staticmethod
+    def _process_mcm_publisher(publisher, date_from, date_to):
+        """Process an MCM publisher using CHILD_NETWORK_CODE filter (original logic)."""
         child_network_code = publisher.network_id
         
         try:
-            # Use parent network YAML file
             from django.conf import settings
             yaml_network_code = settings.GAM_PARENT_NETWORK_CODE
             
-            # Check if YAML file exists
             yaml_filepath = os.path.join(settings.BASE_DIR, 'yaml_files', f"{yaml_network_code}.yaml")
             if not os.path.exists(yaml_filepath):
-                logger.warning(f"⚠️ YAML file not found: {yaml_filepath}")
                 raise FileNotFoundError(f"YAML file not found: {yaml_filepath}")
             
-            
             try:
-                # Get GAM client for PARENT network (not child)
-                # Parent network can access all child network data through MANAGE_INVENTORY
                 client = GAMReportService._get_child_network_client(yaml_network_code)
-                
             except Exception as client_error:
                 error_message = str(client_error)
                 logger.warning(f"❌ Failed to authenticate with GAM for {child_network_code}: {error_message}")
-                
-                # Check if it's an authentication error
                 if any(keyword in error_message for keyword in [
                     'AuthenticationError.NO_NETWORKS_TO_ACCESS',
-                    'NO_NETWORKS_TO_ACCESS',
-                    'AuthenticationError',
-                    'authentication',
-                    'unauthorized'
+                    'NO_NETWORKS_TO_ACCESS', 'AuthenticationError',
+                    'authentication', 'unauthorized'
                 ]):
-                    logger.warning(f"🚫 Authentication error for {child_network_code} - skipping")
                     return {
-                        'records_created': 0,
-                        'records_updated': 0,
-                        'dimensions_processed': [],
-                        'status': 'skipped',
+                        'records_created': 0, 'records_updated': 0,
+                        'dimensions_processed': [], 'status': 'skipped',
                         'message': 'Authentication error - account skipped'
                     }
                 raise
             
-            # Process each dimension
             dimension_results = {}
-            # Create a simple object to mimic invitation with all required attributes
+            
             class MockInvitation:
                 def __init__(self, network_code, parent_code, publisher_obj):
                     self.child_network_code = network_code
-                    self.delegation_type = 'MANAGE_INVENTORY'  # Publishers use parent network credentials
-                    # Create a mock parent_network object
+                    self.delegation_type = 'MANAGE_INVENTORY'
+                    self.gam_type = 'mcm'
                     self.parent_network = type('obj', (object,), {
                         'network_code': parent_code,
                         'network_name': 'Parent Network'
                     })()
-                    # Store publisher info for dimension values
                     self.publisher_name = f"{publisher_obj.company_name or publisher_obj.email}"
                     self.publisher_id = publisher_obj.id
             
@@ -243,23 +248,14 @@ class GAMReportService:
             for dimension_key in dimension_map.keys():
                 try:
                     records = GAMReportService._fetch_child_dimension_reports(
-                        client=client,
-                        invitation=mock_invitation,
+                        client=client, invitation=mock_invitation,
                         dimension_key=dimension_key,
-                        date_from=date_from,
-                        date_to=date_to
+                        date_from=date_from, date_to=date_to
                     )
-                    dimension_results[dimension_key] = {
-                        'success': True,
-                        'records': records
-                    }
-                    logger.debug(f"{dimension_key}: {records} records")
+                    dimension_results[dimension_key] = {'success': True, 'records': records}
                 except Exception as dim_error:
                     logger.error(f"❌ Error processing {dimension_key}: {str(dim_error)}")
-                    dimension_results[dimension_key] = {
-                        'success': False,
-                        'error': str(dim_error)
-                    }
+                    dimension_results[dimension_key] = {'success': False, 'error': str(dim_error)}
             
             total_records = sum(
                 r['records'] for r in dimension_results.values()
@@ -267,15 +263,93 @@ class GAMReportService:
             )
             
             return {
-                'records_created': total_records,
-                'records_updated': 0,
+                'records_created': total_records, 'records_updated': 0,
                 'dimensions_processed': list(dimension_results.keys()),
                 'dimension_results': dimension_results
             }
-            
         except Exception as e:
-            logger.error(f"❌ Error processing publisher {child_network_code}: {str(e)}")
+            logger.error(f"❌ Error processing MCM publisher {child_network_code}: {str(e)}")
             raise
+
+    @staticmethod
+    def _process_oo_publisher(publisher, date_from, date_to):
+        """
+        Process an O&O publisher using SITE_NAME filter instead of CHILD_NETWORK_CODE.
+        Reports are fetched from the O&O GAM network, filtered by the publisher's site URL.
+        """
+        from urllib.parse import urlparse
+        from decouple import config as decouple_config
+        
+        site_url = publisher.site_url
+        if not site_url:
+            logger.warning(f"⚠️ O&O publisher {publisher.email} has no site_url - skipping")
+            return {'records_created': 0, 'records_updated': 0, 'dimensions_processed': [], 'status': 'skipped'}
+        
+        # Normalize site URL to domain (GAM stores as "example.com")
+        parsed = urlparse(site_url) if '://' in site_url else urlparse(f'https://{site_url}')
+        domain = parsed.netloc or parsed.path.split('/')[0]
+        if domain.startswith('www.'):
+            domain = domain[4:]
+        domain = domain.rstrip('/').split(':')[0]
+        
+        oo_network_code = decouple_config('GAM_OO_NETWORK_CODE', default='23341212234')
+        
+        try:
+            client = GAMClientService.get_googleads_client(oo_network_code, gam_type='o_and_o')
+        except Exception as client_error:
+            error_message = str(client_error)
+            logger.warning(f"❌ Failed to authenticate with O&O GAM for {publisher.email}: {error_message}")
+            if any(kw in error_message for kw in [
+                'AuthenticationError', 'NO_NETWORKS_TO_ACCESS',
+                'authentication', 'unauthorized'
+            ]):
+                return {
+                    'records_created': 0, 'records_updated': 0,
+                    'dimensions_processed': [], 'status': 'skipped',
+                    'message': 'O&O authentication error - account skipped'
+                }
+            raise
+        
+        dimension_results = {}
+        
+        class OOInvitation:
+            """Mock invitation for O&O publishers - uses SITE_NAME filter instead of CHILD_NETWORK_CODE."""
+            def __init__(self, site_domain, oo_network, publisher_obj):
+                self.child_network_code = site_domain
+                self.delegation_type = 'OWNED_AND_OPERATED'
+                self.gam_type = 'o_and_o'
+                self.site_domain = site_domain
+                self.parent_network = type('obj', (object,), {
+                    'network_code': oo_network,
+                    'network_name': 'O&O Network'
+                })()
+                self.publisher_name = f"{publisher_obj.company_name or publisher_obj.email}"
+                self.publisher_id = publisher_obj.id
+        
+        oo_invitation = OOInvitation(domain, oo_network_code, publisher)
+        
+        for dimension_key in dimension_map.keys():
+            try:
+                records = GAMReportService._fetch_child_dimension_reports(
+                    client=client, invitation=oo_invitation,
+                    dimension_key=dimension_key,
+                    date_from=date_from, date_to=date_to
+                )
+                dimension_results[dimension_key] = {'success': True, 'records': records}
+            except Exception as dim_error:
+                logger.error(f"❌ O&O error processing {dimension_key} for {domain}: {str(dim_error)}")
+                dimension_results[dimension_key] = {'success': False, 'error': str(dim_error)}
+        
+        total_records = sum(
+            r['records'] for r in dimension_results.values()
+            if r.get('success') and isinstance(r.get('records'), int)
+        )
+        
+        return {
+            'records_created': total_records, 'records_updated': 0,
+            'dimensions_processed': list(dimension_results.keys()),
+            'dimension_results': dimension_results
+        }
 
     @staticmethod
     def _process_child_network(invitation, date_from, date_to):
@@ -410,33 +484,46 @@ class GAMReportService:
             raise
 
     @staticmethod
-    def _get_child_network_client(child_network_code):
-        """Get GAM client for child network using parent YAML configuration"""
+    def _get_child_network_client(child_network_code, gam_type='mcm'):
+        """Get GAM client using the appropriate YAML configuration"""
         try:
-            # Use parent YAML configuration for all managed inventory operations
-            return GAMClientService.get_googleads_client(child_network_code)
+            return GAMClientService.get_googleads_client(child_network_code, gam_type=gam_type)
         except Exception as e:
-            logger.warning(f"⚠️ Failed to get client for {child_network_code}: {str(e)}")
+            logger.warning(f"⚠️ Failed to get client for {child_network_code} (gam_type={gam_type}): {str(e)}")
             raise
     
 
     @staticmethod
     def _fetch_child_dimension_reports(client, invitation, dimension_key, date_from, date_to):
         """
-        REPLICATED: Fetch reports using real GAM API like sub-reports
+        Fetch reports using real GAM API.
+        MCM (MANAGE_INVENTORY): filters by CHILD_NETWORK_CODE.
+        O&O (OWNED_AND_OPERATED): filters by SITE_NAME (domain).
         """
 
         try:
-            # Build report job - REPLICATED from sub-reports
             dimensions = list(GAMReportService.DIMENSION_MAP.get(dimension_key, []))
-            
-            # For MANAGE_INVENTORY, add CHILD_NETWORK_CODE dimension to filter by child
-            if invitation.delegation_type == 'MANAGE_INVENTORY' and "CHILD_NETWORK_CODE" not in dimensions:
-                dimensions.append("CHILD_NETWORK_CODE")
-            
-            # Build filter statement manually to avoid unsupported LIMIT/OFFSET
             filter_statement = None
-            if invitation.delegation_type == 'MANAGE_INVENTORY':
+            
+            is_oo = getattr(invitation, 'gam_type', None) == 'o_and_o' or invitation.delegation_type == 'OWNED_AND_OPERATED'
+            
+            if is_oo:
+                # O&O: ensure SITE_NAME is in dimensions and filter by it
+                if "SITE_NAME" not in dimensions:
+                    dimensions.append("SITE_NAME")
+                site_domain = getattr(invitation, 'site_domain', invitation.child_network_code)
+                filter_statement = {
+                    'query': 'WHERE SITE_NAME = :siteName',
+                    'values': [
+                        {
+                            'key': 'siteName',
+                            'value': {'xsi_type': 'TextValue', 'value': str(site_domain)}
+                        }
+                    ]
+                }
+            elif invitation.delegation_type == 'MANAGE_INVENTORY':
+                if "CHILD_NETWORK_CODE" not in dimensions:
+                    dimensions.append("CHILD_NETWORK_CODE")
                 filter_statement = {
                     'query': 'WHERE CHILD_NETWORK_CODE = :childNetworkCode',
                     'values': [
@@ -650,9 +737,12 @@ class GAMReportService:
                 fill_rate = GAMReportService._quantize(fill_rate, 2)
                 viewable_impressions_rate = GAMReportService._quantize(viewable_impressions_rate, 2)
                 
-                # Get parent network code from config
                 from decouple import config
-                parent_network_code = config('GAM_PARENT_NETWORK_CODE', default='23310681755')
+                is_oo = getattr(invitation, 'gam_type', None) == 'o_and_o' or invitation.delegation_type == 'OWNED_AND_OPERATED'
+                if is_oo:
+                    parent_network_code = config('GAM_OO_NETWORK_CODE', default='23341212234')
+                else:
+                    parent_network_code = config('GAM_PARENT_NETWORK_CODE', default='23310681755')
                 
                 # Create record data
                 record_data = {

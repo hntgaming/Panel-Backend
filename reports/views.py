@@ -44,20 +44,31 @@ logger = logging.getLogger(__name__)
 def get_cache_key(prefix, user_id, **kwargs):
     """
     Generate cache key for report data with consistent naming
-    
-    Args:
-        prefix: Cache key prefix (e.g., 'reports', 'analytics')
-        user_id: User ID for cache isolation
-        **kwargs: Additional parameters to include in key
-    
-    Returns:
-        str: Formatted cache key
     """
     key_parts = [prefix, str(user_id)]
     for k, v in sorted(kwargs.items()):
         if v is not None:
             key_parts.append(f"{k}_{v}")
     return "_".join(key_parts)
+
+
+def apply_publisher_filter(queryset, user):
+    """
+    Apply role-based report filtering for both MCM and O&O publishers.
+    MCM: filter by child_network_code = user.network_id
+    O&O: filter by publisher_id = user.id
+    """
+    if user.is_admin_user:
+        return queryset
+    
+    gam_type = getattr(user, 'gam_type', 'mcm') or 'mcm'
+    
+    if gam_type == 'o_and_o':
+        return queryset.filter(publisher_id=user.id)
+    else:
+        if hasattr(user, 'network_id') and user.network_id:
+            return queryset.filter(child_network_code=user.network_id)
+        return queryset.none()
 
 
 # =============================================================================
@@ -79,19 +90,8 @@ class ReportDataListView(generics.ListAPIView):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        # Simplified queryset for managed inventory
         queryset = MasterMetaData.objects.all()
-
-        user = self.request.user
-
-        # Role-based filtering with optimized query
-        if not user.is_admin_user:
-            # Publisher users see data based on their network_id (as child_network_code)
-            if hasattr(user, 'network_id') and user.network_id:
-                queryset = queryset.filter(child_network_code=user.network_id)
-            else:
-                # If no network_id, return empty queryset
-                queryset = queryset.none()
+        queryset = apply_publisher_filter(queryset, self.request.user)
         
         # Apply filters
         parent_network = self.request.query_params.get('parent_network')
@@ -142,14 +142,7 @@ def report_analytics_view(request):
     """
     user = request.user
     
-    # Base queryset with role-based filtering
-    base_queryset = MasterMetaData.objects.all()
-    if not user.is_admin_user:
-        # Publisher users see data based on their network_id
-        if hasattr(user, 'network_id') and user.network_id:
-            base_queryset = base_queryset.filter(child_network_code=user.network_id)
-        else:
-            base_queryset = base_queryset.none()
+    base_queryset = apply_publisher_filter(MasterMetaData.objects.all(), user)
     
     # Date range (default to last 30 days)
     date_to = timezone.now().date()
@@ -313,14 +306,7 @@ def report_dashboard_view(request):
     """
     user = request.user
     
-    # Base queryset with role-based filtering
-    base_queryset = MasterMetaData.objects.all()
-    if not user.is_admin_user:
-        # Publisher users see data based on their network_id
-        if hasattr(user, 'network_id') and user.network_id:
-            base_queryset = base_queryset.filter(child_network_code=user.network_id)
-        else:
-            base_queryset = base_queryset.none()
+    base_queryset = apply_publisher_filter(MasterMetaData.objects.all(), user)
     
     # Time periods
     today = timezone.now().date()
@@ -436,14 +422,7 @@ def realtime_ivt_check_view(request):
     """
     child_code = request.query_params.get('child_network')
 
-    # Base queryset with role-based filtering
-    base = MasterMetaData.objects.filter(dimension_type='overview')
-    if not request.user.is_admin_user:
-        # Publisher users see data based on their network_id (as child_network_code)
-        if hasattr(request.user, 'network_id') and request.user.network_id:
-            base = base.filter(child_network_code=request.user.network_id)
-        else:
-            base = base.none()
+    base = apply_publisher_filter(MasterMetaData.objects.filter(dimension_type='overview'), request.user)
     if child_code:
         base = base.filter(child_network_code=child_code)
 
@@ -491,18 +470,12 @@ def realtime_ivt_check_view(request):
 
     # Dimension concentration checks (today)
     def top_share(dim):
-        dim_qs = MasterMetaData.objects.filter(
-            dimension_type=dim,
-            date=d1
+        dim_qs = apply_publisher_filter(
+            MasterMetaData.objects.filter(dimension_type=dim, date=d1),
+            request.user
         )
         if child_code:
             dim_qs = dim_qs.filter(child_network_code=child_code)
-        if not request.user.is_admin_user:
-            # Publisher users see data based on their network_id (as child_network_code)
-            if hasattr(request.user, 'network_id') and request.user.network_id:
-                dim_qs = dim_qs.filter(child_network_code=request.user.network_id)
-            else:
-                dim_qs = dim_qs.none()
         total_imp = dim_qs.aggregate(val=Coalesce(Sum('impressions'), 0))['val'] or 0
         if total_imp == 0:
             return 0.0
@@ -547,14 +520,9 @@ class ReportOverviewView(generics.ListAPIView):
     def list(self, request, *args, **kwargs):
         user = request.user
         
-        # Base queryset with role-based filtering
-        queryset = MasterMetaData.objects.filter(dimension_type='overview')
-        if not user.is_admin_user:
-            # Publisher users see data based on their network_id (as child_network_code)
-            if hasattr(user, 'network_id') and user.network_id:
-                queryset = queryset.filter(child_network_code=user.network_id)
-            else:
-                queryset = queryset.none()
+        queryset = apply_publisher_filter(
+            MasterMetaData.objects.filter(dimension_type='overview'), user
+        )
         
         # Apply filters
         date_from = request.query_params.get('date_from')
@@ -598,16 +566,7 @@ class ReportDetailedView(generics.ListAPIView):
     
     def get_queryset(self):
         user = self.request.user
-        
-        # Base queryset with role-based filtering
-        queryset = MasterMetaData.objects.all()
-        
-        if not user.is_admin_user:
-            # Publisher users see data based on their network_id (as child_network_code)
-            if hasattr(user, 'network_id') and user.network_id:
-                queryset = queryset.filter(child_network_code=user.network_id)
-            else:
-                queryset = queryset.none()
+        queryset = apply_publisher_filter(MasterMetaData.objects.all(), user)
         
         # Apply filters
         dimension_type = self.request.query_params.get('dimension_type', 'overview')
@@ -652,15 +611,7 @@ class ReportExportView(generics.GenericAPIView):
         
         user = request.user
         
-        # Get filtered queryset (reuse logic from ReportDetailedView)
-        queryset = MasterMetaData.objects.all()
-        
-        if not user.is_admin_user:
-            # Publisher users see data based on their network_id (as child_network_code)
-            if hasattr(user, 'network_id') and user.network_id:
-                queryset = queryset.filter(child_network_code=user.network_id)
-            else:
-                queryset = queryset.none()
+        queryset = apply_publisher_filter(MasterMetaData.objects.all(), user)
         
         # Apply same filters as detailed view
         dimension_type = request.query_params.get('dimension_type', 'overview')
@@ -773,22 +724,10 @@ class UnifiedReportsQueryView(APIView):
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     def _build_base_queryset(self, user, data):
-        """Build base queryset with role-based access control"""
-        # Simplified for managed inventory - no invitation or parent_network relationships
+        """Build base queryset with role-based access control for MCM and O&O"""
         queryset = MasterMetaData.objects.all()
-        
-        # Exclude Total rows from API responses - frontend calculates its own totals
         queryset = queryset.exclude(dimension_value__iexact='Total')
-        
-        # Role-based filtering
-        if not user.is_admin_user:
-            # Publisher users see data based on their network_id (as child_network_code)
-            if hasattr(user, 'network_id') and user.network_id:
-                queryset = queryset.filter(child_network_code=user.network_id)
-            else:
-                # If no network_id, return empty queryset
-                queryset = queryset.none()
-        
+        queryset = apply_publisher_filter(queryset, user)
         return queryset
     
     def _apply_date_filters(self, queryset, data):
@@ -1192,18 +1131,10 @@ def financial_summary_view(request):
     except ValueError:
         return Response({'error': 'Invalid date format. Use YYYY-MM-DD'}, status=400)
     
-    # Base queryset with role-based filtering
-    base_queryset = MasterMetaData.objects.filter(
-        date__range=[date_from, date_to],
-        dimension_type='overview'
+    base_queryset = apply_publisher_filter(
+        MasterMetaData.objects.filter(date__range=[date_from, date_to], dimension_type='overview'),
+        user
     )
-    
-    if not user.is_admin_user:
-        # Publisher users see data based on their network_id
-        if hasattr(user, 'network_id') and user.network_id:
-            base_queryset = base_queryset.filter(child_network_code=user.network_id)
-        else:
-            base_queryset = base_queryset.none()
     
     # Calculate gross revenue (only from overview dimension to avoid double counting)
     gross_revenue = base_queryset.filter(

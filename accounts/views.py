@@ -705,8 +705,7 @@ def update_publisher(request, user_id):
     try:
         publisher = User.objects.get(id=user_id, role='publisher')
         
-        # Update allowed fields
-        allowed_fields = ['company_name', 'site_url', 'network_id', 'revenue_share_percentage', 'phone_number']
+        allowed_fields = ['company_name', 'site_url', 'network_id', 'revenue_share_percentage', 'phone_number', 'gam_type']
         for field in allowed_fields:
             if field in request.data:
                 setattr(publisher, field, request.data[field])

@@ -16,6 +16,10 @@ class User(AbstractUser, TimeStampedModel):
         ADMIN = 'admin', 'Admin User'
         PUBLISHER = 'publisher', 'Publisher User'
     
+    class GamType(models.TextChoices):
+        MCM = 'mcm', 'MCM (Child Network)'
+        O_AND_O = 'o_and_o', 'Owned & Operated'
+    
     # Basic user information
     email = models.EmailField(unique=True)
     first_name = models.CharField(max_length=30, blank=True)
@@ -57,9 +61,17 @@ class User(AbstractUser, TimeStampedModel):
         help_text="Percentage of revenue that goes to the parent network (0-100%)"
     )
     
+    # GAM type - determines which GAM account and report filtering strategy to use
+    gam_type = models.CharField(
+        max_length=20,
+        choices=GamType.choices,
+        default=GamType.MCM,
+        help_text="MCM: reports filtered by child network ID. O&O: reports filtered by site URL."
+    )
+    
     # Publisher website information
     site_url = models.URLField(blank=True, help_text="Publisher's website URL")
-    network_id = models.CharField(max_length=50, blank=True, help_text="Publisher's GAM network ID")
+    network_id = models.CharField(max_length=50, blank=True, help_text="Publisher's GAM network ID (required for MCM, unused for O&O)")
     
     # RBAC versioning for cache invalidation
     permissions_version = models.IntegerField(default=1, help_text="Version number for permission cache invalidation")

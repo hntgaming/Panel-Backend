@@ -62,6 +62,7 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
             'revenue_share_percentage',
             'site_url',
             'network_id',
+            'gam_type',
             'email_notifications',
             'slack_notifications',
             'slack_webhook_url'
@@ -141,6 +142,17 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({
                 'password_confirm': "Password confirmation doesn't match password."
             })
+        
+        gam_type = attrs.get('gam_type', 'mcm')
+        if gam_type == 'mcm' and not attrs.get('network_id'):
+            raise serializers.ValidationError({
+                'network_id': "Network ID is required for MCM publishers."
+            })
+        if gam_type == 'o_and_o' and not attrs.get('site_url'):
+            raise serializers.ValidationError({
+                'site_url': "Site URL is required for O&O publishers."
+            })
+        
         return attrs
 
     def create(self, validated_data):
@@ -341,15 +353,19 @@ class ChangePasswordSerializer(serializers.Serializer):
 class PublisherPermissionSerializer(serializers.ModelSerializer):
     class Meta:
         model = PublisherPermission
-        fields = ['permission', 'parent_gam_network']
+        fields = ['permission']
 
 
 class PublisherListSerializer(serializers.ModelSerializer):
     full_name = serializers.CharField(source='get_full_name', read_only=True)
+    gam_type_display = serializers.SerializerMethodField()
+    
+    def get_gam_type_display(self, obj):
+        return obj.get_gam_type_display() if hasattr(obj, 'get_gam_type_display') else obj.gam_type
     
     class Meta:
         model = User
-        fields = ['id', 'company_name', 'first_name', 'last_name', 'full_name', 'email', 'phone_number', 'status', 'date_joined', 'revenue_share_percentage', 'site_url', 'network_id']
+        fields = ['id', 'company_name', 'first_name', 'last_name', 'full_name', 'email', 'phone_number', 'status', 'date_joined', 'revenue_share_percentage', 'site_url', 'network_id', 'gam_type', 'gam_type_display']
 
 
 class SiteSerializer(serializers.ModelSerializer):

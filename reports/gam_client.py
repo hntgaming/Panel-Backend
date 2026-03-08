@@ -14,64 +14,71 @@ logger = logging.getLogger(__name__)
 
 class GAMClientService:
     """
-    Simplified GAM client service for managed inventory reports
-    Uses parent YAML configuration for all networks
+    Multi-GAM client service supporting both MCM and O&O networks.
+    MCM: Uses parent YAML (GAM_PARENT_NETWORK_CODE) with child network code override.
+    O&O: Uses O&O YAML (GAM_OO_NETWORK_CODE) directly on the parent network.
     """
     
     @staticmethod
     def get_parent_yaml_path():
-        """Get the parent YAML file path"""
+        """Get the MCM parent YAML file path"""
         yaml_dir = os.path.join(settings.BASE_DIR, 'yaml_files')
         parent_network_code = config('GAM_PARENT_NETWORK_CODE', default='152344380')
         return os.path.join(yaml_dir, f'{parent_network_code}.yaml')
     
     @staticmethod
-    def get_googleads_client(network_code=None):
+    def get_oo_yaml_path():
+        """Get the O&O GAM YAML file path"""
+        yaml_dir = os.path.join(settings.BASE_DIR, 'yaml_files')
+        oo_network_code = config('GAM_OO_NETWORK_CODE', default='23341212234')
+        return os.path.join(yaml_dir, f'{oo_network_code}.yaml')
+    
+    @staticmethod
+    def get_googleads_client(network_code=None, gam_type='mcm'):
         """
-        Get GAM client using parent YAML configuration
-        For managed inventory, we use the parent network configuration
+        Get GAM client using the appropriate YAML configuration.
+        
+        Args:
+            network_code: Network code override (used for MCM child networks)
+            gam_type: 'mcm' for MCM parent network, 'o_and_o' for O&O network
         """
         try:
-            # Use parent YAML file for all managed inventory operations
-            yaml_path = GAMClientService.get_parent_yaml_path()
+            if gam_type == 'o_and_o':
+                yaml_path = GAMClientService.get_oo_yaml_path()
+            else:
+                yaml_path = GAMClientService.get_parent_yaml_path()
             
             if not os.path.exists(yaml_path):
-                raise FileNotFoundError(f"Parent YAML file not found: {yaml_path}")
+                raise FileNotFoundError(f"YAML file not found: {yaml_path}")
             
-            # Load and validate YAML configuration
             with open(yaml_path, 'r') as f:
                 yaml_config = yaml.safe_load(f)
             
-            # Override network code if provided
             if network_code:
-                original_network_code = yaml_config['ad_manager']['network_code']
                 yaml_config['ad_manager']['network_code'] = int(network_code)
             
-            # Create temporary YAML file with updated network code
             with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as temp_yaml:
                 yaml.dump(yaml_config, temp_yaml, default_flow_style=False, indent=2)
                 temp_yaml_path = temp_yaml.name
             
             try:
-                # Initialize client with temporary YAML
                 client = ad_manager.AdManagerClient.LoadFromStorage(temp_yaml_path)
                 return client
             finally:
-                # Clean up temporary file
                 try:
                     os.unlink(temp_yaml_path)
                 except:
                     pass
                     
         except Exception as e:
-            logger.error(f"❌ Failed to create GAM client: {str(e)}")
+            logger.error(f"❌ Failed to create GAM client (gam_type={gam_type}): {str(e)}")
             raise
     
     @staticmethod
-    def test_connection(network_code=None):
+    def test_connection(network_code=None, gam_type='mcm'):
         """Test GAM API connection"""
         try:
-            client = GAMClientService.get_googleads_client(network_code)
+            client = GAMClientService.get_googleads_client(network_code, gam_type=gam_type)
             network_service = client.GetService("NetworkService", version="v202508")
             current_network = network_service.getCurrentNetwork()
             
@@ -284,27 +291,21 @@ class GAMClientService:
             return None
     
     @staticmethod
-    def add_site_to_parent_network(site_url, site_name=None, child_network_code=None):
+    def add_site_to_parent_network(site_url, site_name=None, child_network_code=None, gam_type='mcm'):
         """
-        Add a child publisher's site to the parent GAM network via API
-        
-        Args:
-            site_url: The site URL (e.g., "https://example.com")
-            site_name: Optional site name (defaults to domain from URL)
-            child_network_code: Optional child network code to associate with the site
-        
-        Returns:
-            dict: {'success': bool, 'site_id': str or None, 'error': str or None}
+        Add a site to the appropriate GAM network via API.
+        MCM: adds to MCM parent network. O&O: adds to O&O network.
         """
         try:
             from decouple import config
             from googleads import ad_manager
             
-            # Get parent network code
-            parent_network_code = config('GAM_PARENT_NETWORK_CODE', default='23310681755')
+            if gam_type == 'o_and_o':
+                target_network_code = config('GAM_OO_NETWORK_CODE', default='23341212234')
+            else:
+                target_network_code = config('GAM_PARENT_NETWORK_CODE', default='23310681755')
             
-            # Get GAM client using parent network YAML
-            client = GAMClientService.get_googleads_client(parent_network_code)
+            client = GAMClientService.get_googleads_client(target_network_code, gam_type=gam_type)
             
             # Use SiteService to create sites
             site_service = client.GetService("SiteService", version="v202511")
@@ -487,27 +488,28 @@ class GAMClientService:
             return None
     
     @staticmethod
-    def get_site_status_from_gam(site_url=None, site_id=None):
+    def get_site_status_from_gam(site_url=None, site_id=None, gam_type='mcm'):
         """
         Get site status from GAM API
         
         Args:
             site_url: Site URL to look up
             site_id: GAM Site ID to look up
+            gam_type: 'mcm' or 'o_and_o'
         
         Returns:
             dict: {'success': bool, 'status': str, 'site_id': str, 'error': str or None}
-            Status values: 'ready', 'getting_ready', 'requires_review', 'needs_attention'
         """
         try:
             from decouple import config
             from googleads import ad_manager
             
-            # Get parent network code
-            parent_network_code = config('GAM_PARENT_NETWORK_CODE', default='23310681755')
+            if gam_type == 'o_and_o':
+                target_network_code = config('GAM_OO_NETWORK_CODE', default='23341212234')
+            else:
+                target_network_code = config('GAM_PARENT_NETWORK_CODE', default='23310681755')
             
-            # Get GAM client using parent network YAML
-            client = GAMClientService.get_googleads_client(parent_network_code)
+            client = GAMClientService.get_googleads_client(target_network_code, gam_type=gam_type)
             
             # Use SiteService to get sites
             site_service = client.GetService("SiteService", version="v202511")
@@ -687,11 +689,11 @@ class GAMClientService:
             
             for site in sites:
                 try:
-                    # Get status from GAM
+                    publisher_gam_type = getattr(site.publisher, 'gam_type', 'mcm') or 'mcm'
                     if site.gam_site_id:
-                        result = GAMClientService.get_site_status_from_gam(site_id=site.gam_site_id)
+                        result = GAMClientService.get_site_status_from_gam(site_id=site.gam_site_id, gam_type=publisher_gam_type)
                     else:
-                        result = GAMClientService.get_site_status_from_gam(site_url=site.url)
+                        result = GAMClientService.get_site_status_from_gam(site_url=site.url, gam_type=publisher_gam_type)
                     
                     if result.get('success'):
                         # Update site status

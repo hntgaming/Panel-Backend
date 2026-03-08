@@ -1,0 +1,5 @@
+ad_manager:
+  application_name: GAM Management Platform
+  delegated_account: report@hnt-gaming.iam.gserviceaccount.com
+  network_code: 23341212234
+  path_to_private_key_file: the@hnt.json

@@ -32,7 +32,7 @@ def send_welcome_email_with_reset_link(user):
     text_content = (
         f"Hi {user.get_full_name() or user.username},\n\n"
         "Welcome to H&T GAMING — Managed Inventory Publisher Dashboard.\n\n"
-        "You've been invited to our enterprise platform for Google Ad Manager integration "
+        "You've been invited to our platform for Google Ad Manager integration "
         "and programmatic revenue optimization.\n\n"
         f"Activate your account: {reset_url}\n\n"
         "─────────────────────────────────\n\n"

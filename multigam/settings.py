@@ -384,6 +384,14 @@ GAM_API_VERSION = GAM_CONFIG['API_VERSION']
 # CRITICAL: Add this missing field that your service account needs
 GAM_SERVICE_ACCOUNT_EMAIL = GAM_SERVICE_ACCOUNT_INFO.get('client_email')
 
+# =====================================================================
+# OWNED & OPERATED (O&O) GAM CONFIGURATION
+# Second GAM 360 account for O&O inventory (no child networks)
+# =====================================================================
+GAM_OO_NETWORK_CODE = config('GAM_OO_NETWORK_CODE', default='23341212234')
+GAM_OO_PRIVATE_KEY_FILE = config('GAM_OO_PRIVATE_KEY_FILE', default='the@hnt.json')
+GAM_OO_DELEGATED_ACCOUNT = config('GAM_OO_DELEGATED_ACCOUNT', default='report@hnt-gaming.iam.gserviceaccount.com')
+
 # Print GAM configuration in development
 # GAM configuration loaded - validation happens in services
 
