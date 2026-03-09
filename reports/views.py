@@ -641,9 +641,14 @@ class ReportExportView(generics.GenericAPIView):
         # Write data
         for record in queryset.order_by('-date', 'dimension_value'):
             partner_email = ''
-            if record.child_network_code:
+            if record.publisher_id:
                 try:
-                    # Find publisher by network_id (child_network_code is the publisher's network)
+                    partner = User.objects.get(id=record.publisher_id)
+                    partner_email = partner.email
+                except User.DoesNotExist:
+                    pass
+            elif record.child_network_code:
+                try:
                     partner = User.objects.get(network_id=record.child_network_code, role='publisher')
                     partner_email = partner.email
                 except User.DoesNotExist:
@@ -738,18 +743,18 @@ class UnifiedReportsQueryView(APIView):
         return queryset.filter(date__range=[date_from, date_to])
     
     def _apply_dynamic_filters(self, queryset, filters):
-        """Apply dynamic filters from the filters object"""
+        """Apply dynamic filters from the filters object.
+        child_network values match child_network_code in the DB:
+          MCM -> the publisher's GAM network ID
+          O&O -> the publisher's site domain
+        """
         for filter_key, filter_values in filters.items():
-            if not filter_values:  # Skip empty filters
+            if not filter_values:
                 continue
             
             if filter_key == 'parent_network':
                 queryset = queryset.filter(parent_network_code__in=filter_values)
-            elif filter_key == 'publisher':
-                # Filter by publisher's child_network_code (their network_id)
-                queryset = queryset.filter(child_network_code__in=filter_values)
-            elif filter_key == 'child_network':
-                # Filter by child_network_code - this is the publisher's network ID
+            elif filter_key in ('publisher', 'child_network'):
                 queryset = queryset.filter(child_network_code__in=filter_values)
             elif filter_key == 'dimension_type':
                 queryset = queryset.filter(dimension_type__in=filter_values)
