@@ -153,8 +153,9 @@ class MasterMetaData(models.Model):
                 raise ValidationError({field: f'{field} cannot be negative'})
 
     def save(self, *args, **kwargs):
-        """Override save to ensure validation"""
-        self.full_clean()
+        """Validate before single-record saves; bulk paths bypass this."""
+        if not kwargs.pop('skip_validation', False):
+            self.full_clean()
         super().save(*args, **kwargs)
 
     def __str__(self):

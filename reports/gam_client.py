@@ -1,7 +1,8 @@
-# reports/gam_client.py - Simplified GAM Client Service
+# reports/gam_client.py - High-Performance GAM Client Service
 
 import os
 import tempfile
+import threading
 import yaml
 from googleads import ad_manager
 from google.oauth2 import service_account
@@ -11,67 +12,89 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+_client_cache = {}
+_client_cache_lock = threading.Lock()
+
 
 class GAMClientService:
     """
     Multi-GAM client service supporting both MCM and O&O networks.
     MCM: Uses parent YAML (GAM_PARENT_NETWORK_CODE) with child network code override.
     O&O: Uses O&O YAML (GAM_OO_NETWORK_CODE) directly on the parent network.
+
+    Clients are cached per (gam_type, network_code) tuple to avoid redundant
+    YAML I/O and OAuth handshakes across parallel workers.
     """
-    
+
     @staticmethod
     def get_parent_yaml_path():
-        """Get the MCM parent YAML file path"""
         yaml_dir = os.path.join(settings.BASE_DIR, 'yaml_files')
         parent_network_code = config('GAM_PARENT_NETWORK_CODE', default='152344380')
         return os.path.join(yaml_dir, f'{parent_network_code}.yaml')
-    
+
     @staticmethod
     def get_oo_yaml_path():
-        """Get the O&O GAM YAML file path"""
         yaml_dir = os.path.join(settings.BASE_DIR, 'yaml_files')
         oo_network_code = config('GAM_OO_NETWORK_CODE', default='23341212234')
         return os.path.join(yaml_dir, f'{oo_network_code}.yaml')
-    
+
+    @staticmethod
+    def clear_client_cache():
+        """Flush the cached GAM clients (useful between cron runs)."""
+        with _client_cache_lock:
+            _client_cache.clear()
+
     @staticmethod
     def get_googleads_client(network_code=None, gam_type='mcm'):
         """
-        Get GAM client using the appropriate YAML configuration.
-        
-        Args:
-            network_code: Network code override (used for MCM child networks)
-            gam_type: 'mcm' for MCM parent network, 'o_and_o' for O&O network
+        Return a cached (or freshly created) GAM AdManagerClient.
+
+        For MCM publishers the parent YAML is loaded once and re-used for every
+        child network because the ``network_code`` override only affects report
+        scoping, not authentication.  For O&O publishers the O&O YAML is loaded
+        once and shared across all O&O sites.
         """
+        cache_key = (gam_type, network_code)
+
+        with _client_cache_lock:
+            cached = _client_cache.get(cache_key)
+            if cached is not None:
+                return cached
+
         try:
             if gam_type == 'o_and_o':
                 yaml_path = GAMClientService.get_oo_yaml_path()
             else:
                 yaml_path = GAMClientService.get_parent_yaml_path()
-            
+
             if not os.path.exists(yaml_path):
                 raise FileNotFoundError(f"YAML file not found: {yaml_path}")
-            
+
             with open(yaml_path, 'r') as f:
                 yaml_config = yaml.safe_load(f)
-            
+
             if network_code:
                 yaml_config['ad_manager']['network_code'] = int(network_code)
-            
+
             with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as temp_yaml:
                 yaml.dump(yaml_config, temp_yaml, default_flow_style=False, indent=2)
                 temp_yaml_path = temp_yaml.name
-            
+
             try:
                 client = ad_manager.AdManagerClient.LoadFromStorage(temp_yaml_path)
-                return client
             finally:
                 try:
                     os.unlink(temp_yaml_path)
-                except:
+                except OSError:
                     pass
-                    
+
+            with _client_cache_lock:
+                _client_cache[cache_key] = client
+
+            return client
+
         except Exception as e:
-            logger.error(f"❌ Failed to create GAM client (gam_type={gam_type}): {str(e)}")
+            logger.error(f"Failed to create GAM client (gam_type={gam_type}): {str(e)}")
             raise
     
     @staticmethod
@@ -391,7 +414,7 @@ class GAMClientService:
                                 'success': True,
                                 'duplicate': True,
                                 'site_id': str(existing.get('id', '')),
-                                'site_url': existing.get('url', normalized_url),
+                                'site_url': existing.get('url', normalized_domain),
                                 'message': 'Site already exists in GAM network',
                                 'child_network_code': existing.get('childNetworkCode') if existing else child_network_code
                             }
