@@ -22,8 +22,7 @@ import logging
 # Local imports
 from accounts.models import User
 from accounts.views import IsAdminUser
-# Removed gam_accounts dependencies - simplified for managed inventory
-from .models import MasterMetaData, ReportSyncLog
+from .models import MasterMetaData, ReportSyncLog, MonthlyEarning
 from .services import GAMReportService
 from django.http import HttpResponse
 from .serializers import (
@@ -31,7 +30,9 @@ from .serializers import (
     ReportAnalyticsSerializer,
     ReportSyncLogSerializer,
     TriggerSyncSerializer,
-    UnifiedReportsQuerySerializer
+    UnifiedReportsQuerySerializer,
+    MonthlyEarningSerializer,
+    MonthlyEarningAdminSerializer,
 )
 
 logger = logging.getLogger(__name__)
@@ -1172,8 +1173,184 @@ def financial_summary_view(request):
 
 
 # =============================================================================
-# END OF FILE
+# MONTHLY EARNINGS VIEWS
 # =============================================================================
-# Note: Sub-report views have been moved to separate files for better organization
-# =============================================================================
+
+class MonthlyEarningListView(generics.ListAPIView):
+    """
+    GET /api/reports/earnings/
+    Publishers see only their own records.  Admins see all.
+    Supports ?month=YYYY-MM-DD and ?status=pending|processing|paid filters.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get_serializer_class(self):
+        if self.request.user.is_admin_user:
+            return MonthlyEarningAdminSerializer
+        return MonthlyEarningSerializer
+
+    def get_queryset(self):
+        user = self.request.user
+        qs = MonthlyEarning.objects.select_related('publisher')
+
+        if not user.is_admin_user:
+            qs = qs.filter(publisher=user)
+
+        month = self.request.query_params.get('month')
+        if month:
+            qs = qs.filter(month=month)
+
+        status_filter = self.request.query_params.get('status')
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+
+        publisher_id = self.request.query_params.get('publisher')
+        if publisher_id and user.is_admin_user:
+            qs = qs.filter(publisher_id=publisher_id)
+
+        return qs.order_by('-month', 'publisher__email')
+
+
+class MonthlyEarningDetailView(generics.RetrieveUpdateAPIView):
+    """
+    GET / PATCH /api/reports/earnings/<pk>/
+    Admin can update ivt_deduction, parent_share, status, notes.
+    Publishers can only GET their own record.
+    """
+    permission_classes = [IsAuthenticated]
+    queryset = MonthlyEarning.objects.select_related('publisher')
+
+    def get_serializer_class(self):
+        if self.request.user.is_admin_user:
+            return MonthlyEarningAdminSerializer
+        return MonthlyEarningSerializer
+
+    def get_queryset(self):
+        user = self.request.user
+        qs = MonthlyEarning.objects.select_related('publisher')
+        if not user.is_admin_user:
+            qs = qs.filter(publisher=user)
+        return qs
+
+    def perform_update(self, serializer):
+        instance = serializer.save()
+        instance.recalculate_net()
+        instance.save()
+
+
+class GenerateMonthlyEarningsView(APIView):
+    """
+    POST /api/reports/earnings/generate/
+    Admin-only.  Body: { "month": "YYYY-MM-DD" }
+    Auto-calculates gross_revenue and total_impressions from MasterMetaData
+    for each publisher that has overview data in that month.
+    """
+    permission_classes = [IsAdminUser]
+
+    def post(self, request):
+        month_str = request.data.get('month')
+        if not month_str:
+            return Response({'error': 'month is required (YYYY-MM-DD, first of month)'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            month_date = datetime.strptime(month_str, '%Y-%m-%d').date()
+        except ValueError:
+            return Response({'error': 'Invalid date format. Use YYYY-MM-DD.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        month_date = month_date.replace(day=1)
+
+        if month_date.month == 12:
+            next_month = month_date.replace(year=month_date.year + 1, month=1, day=1)
+        else:
+            next_month = month_date.replace(month=month_date.month + 1, day=1)
+
+        publishers = User.objects.filter(role=User.UserRole.PUBLISHER)
+
+        created_count = 0
+        updated_count = 0
+
+        for pub in publishers:
+            qs = MasterMetaData.objects.filter(
+                dimension_type='overview',
+                date__gte=month_date,
+                date__lt=next_month,
+            )
+
+            gam_type = getattr(pub, 'gam_type', 'mcm') or 'mcm'
+            if gam_type == 'o_and_o':
+                qs = qs.filter(publisher_id=pub.id)
+            else:
+                if pub.network_id:
+                    qs = qs.filter(child_network_code=pub.network_id)
+                else:
+                    continue
+
+            agg = qs.aggregate(
+                gross=Coalesce(Sum('revenue'), Decimal('0')),
+                imps=Coalesce(Sum('impressions'), 0),
+            )
+
+            gross = agg['gross']
+            imps = agg['imps']
+
+            if gross == 0 and imps == 0:
+                continue
+
+            earning, created = MonthlyEarning.objects.get_or_create(
+                publisher=pub,
+                month=month_date,
+                defaults={
+                    'gross_revenue': gross,
+                    'total_impressions': imps,
+                }
+            )
+
+            if not created:
+                earning.gross_revenue = gross
+                earning.total_impressions = imps
+
+            earning.recalculate_net()
+            earning.save()
+
+            if created:
+                created_count += 1
+            else:
+                updated_count += 1
+
+        return Response({
+            'success': True,
+            'month': month_date.isoformat(),
+            'created': created_count,
+            'updated': updated_count,
+        }, status=status.HTTP_200_OK)
+
+
+class BulkUpdateEarningsView(APIView):
+    """
+    POST /api/reports/earnings/bulk-update/
+    Admin-only.  Body: { "ids": [1,2,...], "status": "paid" }
+    Allows batch status updates.
+    """
+    permission_classes = [IsAdminUser]
+
+    def post(self, request):
+        ids = request.data.get('ids', [])
+        new_status = request.data.get('status')
+
+        if not ids:
+            return Response({'error': 'ids list is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        valid_statuses = [s[0] for s in MonthlyEarning.Status.choices]
+        if new_status not in valid_statuses:
+            return Response({'error': f'Invalid status. Must be one of: {valid_statuses}'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        updated = MonthlyEarning.objects.filter(id__in=ids).update(status=new_status)
+
+        return Response({
+            'success': True,
+            'updated': updated,
+        }, status=status.HTTP_200_OK)
 

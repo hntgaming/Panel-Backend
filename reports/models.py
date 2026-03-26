@@ -254,3 +254,54 @@ class ReportSyncLog(models.Model):
             self.network_errors = {}
         self.network_errors[network_code] = str(error_message)
         self.save()
+
+
+class MonthlyEarning(models.Model):
+    """
+    Monthly earnings / invoice record per publisher.
+    gross_revenue and total_impressions are auto-calculated from MasterMetaData.
+    IVT deduction, parent share, and status are managed by admin.
+    """
+
+    class Status(models.TextChoices):
+        PENDING = 'pending', 'Pending'
+        PROCESSING = 'processing', 'Processing'
+        PAID = 'paid', 'Paid'
+
+    publisher = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='earnings',
+    )
+    month = models.DateField(
+        help_text="First day of the month, e.g. 2026-03-01",
+    )
+
+    gross_revenue = models.DecimalField(max_digits=20, decimal_places=2, default=0)
+    total_impressions = models.BigIntegerField(default=0)
+
+    ivt_deduction = models.DecimalField(max_digits=20, decimal_places=2, default=0)
+    parent_share = models.DecimalField(max_digits=20, decimal_places=2, default=0)
+    net_earnings = models.DecimalField(max_digits=20, decimal_places=2, default=0)
+
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    notes = models.TextField(blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'report_monthly_earnings'
+        unique_together = ['publisher', 'month']
+        ordering = ['-month', 'publisher__email']
+        indexes = [
+            models.Index(fields=['publisher', '-month']),
+            models.Index(fields=['status']),
+        ]
+
+    def __str__(self):
+        return f"{self.publisher.email} | {self.month.strftime('%b %Y')} | {self.status}"
+
+    def recalculate_net(self):
+        self.net_earnings = self.gross_revenue - self.ivt_deduction - self.parent_share
+        return self.net_earnings

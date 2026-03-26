@@ -57,5 +57,24 @@ urlpatterns = [
         views.realtime_ivt_check_view,
         name='realtime-ivt-check'
     ),
-    # Vetting analysis endpoint removed - not needed for Managed Inventory Publisher Dashboard
+    path(
+        'earnings/',
+        views.MonthlyEarningListView.as_view(),
+        name='earnings-list'
+    ),
+    path(
+        'earnings/generate/',
+        views.GenerateMonthlyEarningsView.as_view(),
+        name='earnings-generate'
+    ),
+    path(
+        'earnings/bulk-update/',
+        views.BulkUpdateEarningsView.as_view(),
+        name='earnings-bulk-update'
+    ),
+    path(
+        'earnings/<int:pk>/',
+        views.MonthlyEarningDetailView.as_view(),
+        name='earnings-detail'
+    ),
 ]

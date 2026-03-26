@@ -1,12 +1,9 @@
-# reports/serializers.py - COMPLETE FILE with New Unmatched Metrics
-
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from datetime import datetime, timedelta
 from django.utils import timezone
 
-# Removed gam_accounts dependencies
-from .models import MasterMetaData, ReportSyncLog
+from .models import MasterMetaData, ReportSyncLog, MonthlyEarning
 
 User = get_user_model()
 
@@ -246,3 +243,38 @@ class ReportSyncLogSerializer(serializers.ModelSerializer):
         if obj.total_networks_processed > 0:
             return round((obj.successful_networks / obj.total_networks_processed) * 100, 2)
         return 0
+
+
+class MonthlyEarningSerializer(serializers.ModelSerializer):
+    publisher_email = serializers.EmailField(source='publisher.email', read_only=True)
+    publisher_name = serializers.SerializerMethodField()
+    company_name = serializers.CharField(source='publisher.company_name', read_only=True)
+
+    class Meta:
+        model = MonthlyEarning
+        fields = [
+            'id', 'publisher', 'publisher_email', 'publisher_name', 'company_name',
+            'month', 'gross_revenue', 'total_impressions',
+            'ivt_deduction', 'parent_share', 'net_earnings',
+            'status', 'notes',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = [
+            'id', 'publisher', 'publisher_email', 'publisher_name', 'company_name',
+            'gross_revenue', 'total_impressions', 'net_earnings',
+            'created_at', 'updated_at',
+        ]
+
+    def get_publisher_name(self, obj):
+        return obj.publisher.get_full_name() or obj.publisher.email
+
+
+class MonthlyEarningAdminSerializer(MonthlyEarningSerializer):
+    """Admin can update ivt_deduction, parent_share, status, notes."""
+
+    class Meta(MonthlyEarningSerializer.Meta):
+        read_only_fields = [
+            'id', 'publisher', 'publisher_email', 'publisher_name', 'company_name',
+            'gross_revenue', 'total_impressions', 'net_earnings',
+            'created_at', 'updated_at',
+        ]
