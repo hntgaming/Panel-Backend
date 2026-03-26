@@ -11,7 +11,8 @@ MCM_PUB_ID = '6193096344573365'
 OO_PUB_ID = '5954359733787559'
 
 
-def _required_entries_for_pub(pub_id):
+def _valid_entries_for_pub(pub_id):
+    """Either DIRECT or RESELLER is sufficient — not both required."""
     return [
         f'google.com, pub-{pub_id}, DIRECT, f08c47fec0942fa0',
         f'google.com, pub-{pub_id}, RESELLER, f08c47fec0942fa0',
@@ -118,6 +119,7 @@ class AdsTxtChecker:
     def validate_ads_txt_content(content, site_url=None, gam_type='mcm'):
         """
         Validate ads.txt content against the correct pub ID for the GAM type.
+        Either DIRECT or RESELLER entry is sufficient — both are not required.
 
         Args:
             content: Raw ads.txt file content
@@ -125,7 +127,7 @@ class AdsTxtChecker:
             gam_type: 'mcm' or 'o_and_o'
         """
         pub_id = OO_PUB_ID if gam_type == 'o_and_o' else MCM_PUB_ID
-        required_entries = _required_entries_for_pub(pub_id)
+        valid_entries = _valid_entries_for_pub(pub_id)
 
         if not content or len(content.strip()) == 0:
             return {
@@ -133,15 +135,13 @@ class AdsTxtChecker:
                 'has_owner_domain': True,
                 'has_manager_domain': True,
                 'has_required_entries': False,
-                'missing_entries': required_entries,
+                'missing_entries': valid_entries,
                 'found_entries': [],
                 'errors': ['Empty file'],
             }
 
         lines = content.strip().split('\n')
-
         found_entries = []
-        missing_entries = list(required_entries)
 
         for line in lines:
             line = line.strip()
@@ -150,19 +150,22 @@ class AdsTxtChecker:
 
             line_normalized = ','.join(p.strip() for p in line.split(','))
 
-            for req_entry in required_entries:
-                req_normalized = ','.join(p.strip() for p in req_entry.split(','))
-                if req_normalized == line_normalized:
-                    if req_entry in missing_entries:
-                        missing_entries.remove(req_entry)
-                        found_entries.append(req_entry)
+            for entry in valid_entries:
+                entry_normalized = ','.join(p.strip() for p in entry.split(','))
+                if entry_normalized == line_normalized:
+                    if entry not in found_entries:
+                        found_entries.append(entry)
                     break
 
+        is_valid = len(found_entries) > 0
+
+        missing_entries = [e for e in valid_entries if e not in found_entries] if not is_valid else []
+
         return {
-            'is_valid': len(missing_entries) == 0,
+            'is_valid': is_valid,
             'has_owner_domain': True,
             'has_manager_domain': True,
-            'has_required_entries': len(missing_entries) == 0,
+            'has_required_entries': is_valid,
             'found_entries': found_entries,
             'missing_entries': missing_entries,
             'errors': [],
