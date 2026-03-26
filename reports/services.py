@@ -324,24 +324,39 @@ class GAMReportService:
     def _fetch_all_dimensions_parallel(client, invitation, date_from, date_to):
         """
         Fetch all 8 dimension reports concurrently using a thread pool.
-        GAM API quota is per-account so dimensions don't compete with each other.
+        Each date in the range is fetched individually to prevent GAM from
+        aggregating multi-day data into a single row (non-DATE dimensions
+        don't break down by date).
         """
+        from datetime import timedelta
+
         dimension_keys = list(dimension_map.keys())
         all_records = []
         auth_failed = False
 
-        def _fetch_dim(dim_key):
-            return dim_key, GAMReportService._fetch_dimension_with_fallback(
-                client, invitation, dim_key, date_from, date_to
+        dates = []
+        d = date_from
+        while d <= date_to:
+            dates.append(d)
+            d += timedelta(days=1)
+
+        tasks = [(dk, single_date) for single_date in dates for dk in dimension_keys]
+
+        def _fetch_dim(dim_key, target_date):
+            return dim_key, target_date, GAMReportService._fetch_dimension_with_fallback(
+                client, invitation, dim_key, target_date, target_date
             )
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=DIMENSION_WORKERS) as executor:
-            futures = {executor.submit(_fetch_dim, dk): dk for dk in dimension_keys}
+            futures = {
+                executor.submit(_fetch_dim, dk, td): (dk, td)
+                for dk, td in tasks
+            }
 
             for future in concurrent.futures.as_completed(futures):
-                dim_key = futures[future]
+                dk, td = futures[future]
                 try:
-                    _, result = future.result()
+                    _, _, result = future.result()
                     if result.get('skipped_due_to_auth_error'):
                         auth_failed = True
                         executor.shutdown(wait=False, cancel_futures=True)
@@ -351,7 +366,7 @@ class GAMReportService:
                     if _is_auth_error(str(e)):
                         auth_failed = True
                         break
-                    logger.warning(f"Dimension {dim_key} failed for {invitation.child_network_code}: {e}")
+                    logger.warning(f"Dimension {dk} ({td}) failed for {invitation.child_network_code}: {e}")
 
         if auth_failed:
             return {'records_created': 0, 'records_updated': 0, 'status': 'auth_error'}
