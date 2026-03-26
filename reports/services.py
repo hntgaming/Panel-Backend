@@ -87,6 +87,65 @@ def _quantize(value: Decimal, places: int) -> Decimal:
         return Decimal('0').quantize(q, rounding=ROUND_HALF_UP)
 
 
+def _aggregate_oo_records(records):
+    """
+    For O&O publishers, SITE_NAME is added as an extra dimension to all reports.
+    GAM then breaks down rows per subdomain (e.g. ldr.virviral.xyz,
+    nya.virviral.xyz), creating duplicate dimension_value keys like "Chrome"
+    appearing multiple times. This function sums the additive metrics
+    (impressions, revenue, clicks, ad_requests) and recalculates the derived
+    ones (eCPM, CTR, fill_rate, viewability) from the aggregated totals.
+    """
+    if not records:
+        return records
+
+    from collections import defaultdict
+    buckets = defaultdict(lambda: {
+        'impressions': 0,
+        'revenue': Decimal('0'),
+        'clicks': 0,
+        'total_ad_requests': 0,
+        'viewable_weighted': Decimal('0'),
+    })
+
+    templates = {}
+
+    for r in records:
+        key = (r['child_network_code'], r['date'], r['dimension_type'], r['dimension_value'])
+        b = buckets[key]
+        imp = r['impressions']
+        b['impressions'] += imp
+        b['revenue'] += r['revenue']
+        b['clicks'] += r['clicks']
+        b['total_ad_requests'] += r['total_ad_requests']
+        b['viewable_weighted'] += r['viewable_impressions_rate'] * imp
+        if key not in templates:
+            templates[key] = r
+
+    aggregated = []
+    for key, b in buckets.items():
+        tmpl = dict(templates[key])
+        imp = b['impressions']
+        rev = b['revenue']
+        clicks = b['clicks']
+        ad_req = b['total_ad_requests']
+
+        ecpm = (rev / imp * 1000) if imp > 0 else Decimal('0')
+        ctr = (Decimal(clicks) / Decimal(imp) * 100) if imp > 0 else Decimal('0')
+        view_rate = (b['viewable_weighted'] / imp) if imp > 0 else Decimal('0')
+
+        tmpl['impressions'] = imp
+        tmpl['revenue'] = _quantize(rev, 2)
+        tmpl['clicks'] = clicks
+        tmpl['total_ad_requests'] = ad_req
+        tmpl['ecpm'] = _quantize(ecpm, 2)
+        tmpl['ctr'] = _quantize(ctr, 2)
+        tmpl['viewable_impressions_rate'] = _quantize(view_rate, 2)
+        aggregated.append(tmpl)
+
+    return aggregated
+
+
 class GAMReportService:
     """
     High-performance service for fetching GAM reports.
@@ -497,6 +556,9 @@ class GAMReportService:
             except Exception as e:
                 logger.warning(f"Row processing error: {e}")
                 continue
+
+        if is_oo and dimension_key != 'site':
+            records = _aggregate_oo_records(records)
 
         return records
 
