@@ -7,92 +7,69 @@ from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
+MCM_PUB_ID = '6193096344573365'
+OO_PUB_ID = '5954359733787559'
+
+
+def _required_entries_for_pub(pub_id):
+    return [
+        f'google.com, pub-{pub_id}, DIRECT, f08c47fec0942fa0',
+        f'google.com, pub-{pub_id}, RESELLER, f08c47fec0942fa0',
+    ]
+
 
 class AdsTxtChecker:
     """
-    Service to check and validate ads.txt files on publisher websites
+    Service to check and validate ads.txt files on publisher websites.
+    Uses different pub IDs depending on GAM type:
+      - MCM:  pub-6193096344573365
+      - O&O:  pub-5954359733787559
     """
-    
-    TIMEOUT = 10  # seconds
+
+    TIMEOUT = 10
     USER_AGENT = 'Mozilla/5.0 (compatible; HnTGaming/1.0; +https://hntgaming.me)'
-    
+
     @staticmethod
     def get_ads_txt_url(site_url):
-        """
-        Get the ads.txt URL for a given site URL
-        
-        Args:
-            site_url: Full site URL (e.g., https://example.com)
-        
-        Returns:
-            str: URL to ads.txt file
-        """
         try:
-            # Parse the URL
             parsed = urlparse(site_url)
-            
-            # Build ads.txt URL
-            # ads.txt should be at the root: https://example.com/ads.txt
             base_url = f"{parsed.scheme}://{parsed.netloc}"
-            ads_txt_url = urljoin(base_url, '/ads.txt')
-            
-            return ads_txt_url
+            return urljoin(base_url, '/ads.txt')
         except Exception as e:
-            logger.error(f"❌ Error building ads.txt URL for {site_url}: {str(e)}")
+            logger.error(f"Error building ads.txt URL for {site_url}: {e}")
             return None
-    
+
     @staticmethod
-    def check_ads_txt(site_url):
+    def check_ads_txt(site_url, gam_type='mcm'):
         """
-        Check if ads.txt exists and is accessible for a given site
-        
+        Check if ads.txt exists and contains the correct pub ID entries.
+
         Args:
             site_url: Full site URL (e.g., https://example.com)
-        
-        Returns:
-            dict: {
-                'success': bool,
-                'exists': bool,
-                'status': 'added' or 'missing',
-                'url': str,
-                'content': str or None,
-                'error': str or None,
-                'status_code': int or None
-            }
+            gam_type: 'mcm' or 'o_and_o' — determines which pub ID to check
         """
         ads_txt_url = AdsTxtChecker.get_ads_txt_url(site_url)
-        
+
         if not ads_txt_url:
             return {
-                'success': False,
-                'exists': False,
-                'status': 'missing',
-                'url': None,
-                'content': None,
-                'error': 'Failed to build ads.txt URL',
-                'status_code': None
+                'success': False, 'exists': False, 'status': 'missing',
+                'url': None, 'content': None,
+                'error': 'Failed to build ads.txt URL', 'status_code': None,
             }
-        
+
         try:
-            # Make HTTP request to fetch ads.txt
             response = requests.get(
                 ads_txt_url,
                 timeout=AdsTxtChecker.TIMEOUT,
-                headers={
-                    'User-Agent': AdsTxtChecker.USER_AGENT
-                },
-                allow_redirects=True
+                headers={'User-Agent': AdsTxtChecker.USER_AGENT},
+                allow_redirects=True,
             )
-            
-            # Check if request was successful
+
             if response.status_code == 200:
                 content = response.text.strip()
-                
-                # Validate ads.txt content against required entries
-                validation = AdsTxtChecker.validate_ads_txt_content(content, site_url)
+                validation = AdsTxtChecker.validate_ads_txt_content(content, gam_type=gam_type)
                 is_valid = validation.get('is_valid', False)
-                
-                # Build error message if invalid
+
                 error_msg = None
                 if not is_valid:
                     missing = validation.get('missing_entries', [])
@@ -100,199 +77,146 @@ class AdsTxtChecker:
                         error_msg = f"Missing required entries: {', '.join(missing[:2])}"
                     else:
                         error_msg = 'Invalid ads.txt content'
-                
+
                 return {
-                    'success': True,
-                    'exists': True,
-                    'status': 'added' if is_valid else 'missing',  # If invalid, treat as missing
+                    'success': True, 'exists': True,
+                    'status': 'added' if is_valid else 'missing',
                     'url': ads_txt_url,
                     'content': content if is_valid else None,
-                    'error': error_msg,
-                    'status_code': response.status_code,
-                    'validation': validation
+                    'error': error_msg, 'status_code': response.status_code,
+                    'validation': validation,
                 }
             else:
-                # ads.txt not found or server error
                 return {
-                    'success': True,
-                    'exists': False,
-                    'status': 'missing',
-                    'url': ads_txt_url,
-                    'content': None,
+                    'success': True, 'exists': False, 'status': 'missing',
+                    'url': ads_txt_url, 'content': None,
                     'error': f'HTTP {response.status_code}',
-                    'status_code': response.status_code
+                    'status_code': response.status_code,
                 }
-                
+
         except requests.exceptions.Timeout:
             return {
-                'success': False,
-                'exists': False,
-                'status': 'missing',
-                'url': ads_txt_url,
-                'content': None,
-                'error': 'Request timeout',
-                'status_code': None
+                'success': False, 'exists': False, 'status': 'missing',
+                'url': ads_txt_url, 'content': None,
+                'error': 'Request timeout', 'status_code': None,
             }
         except requests.exceptions.ConnectionError:
             return {
-                'success': False,
-                'exists': False,
-                'status': 'missing',
-                'url': ads_txt_url,
-                'content': None,
-                'error': 'Connection error',
-                'status_code': None
+                'success': False, 'exists': False, 'status': 'missing',
+                'url': ads_txt_url, 'content': None,
+                'error': 'Connection error', 'status_code': None,
             }
         except Exception as e:
-            error_msg = str(e)
-            logger.error(f"❌ Error checking ads.txt for {site_url}: {error_msg}")
+            logger.error(f"Error checking ads.txt for {site_url}: {e}")
             return {
-                'success': False,
-                'exists': False,
-                'status': 'missing',
-                'url': ads_txt_url,
-                'content': None,
-                'error': error_msg,
-                'status_code': None
+                'success': False, 'exists': False, 'status': 'missing',
+                'url': ads_txt_url, 'content': None,
+                'error': str(e), 'status_code': None,
             }
-    
+
     @staticmethod
-    def validate_ads_txt_content(content, site_url=None):
+    def validate_ads_txt_content(content, site_url=None, gam_type='mcm'):
         """
-        Validate ads.txt content - check for required Google entries only
-        
+        Validate ads.txt content against the correct pub ID for the GAM type.
+
         Args:
-            content: The content of the ads.txt file
-            site_url: Not used (kept for compatibility)
-        
-        Returns:
-            dict: {
-                'is_valid': bool,
-                'has_owner_domain': bool,
-                'has_manager_domain': bool,
-                'has_required_entries': bool,
-                'missing_entries': list,
-                'errors': list
-            }
+            content: Raw ads.txt file content
+            site_url: Unused (kept for backward compatibility)
+            gam_type: 'mcm' or 'o_and_o'
         """
+        pub_id = OO_PUB_ID if gam_type == 'o_and_o' else MCM_PUB_ID
+        required_entries = _required_entries_for_pub(pub_id)
+
         if not content or len(content.strip()) == 0:
             return {
                 'is_valid': False,
-                'has_owner_domain': True,  # Not checked
-                'has_manager_domain': True,  # Not checked
+                'has_owner_domain': True,
+                'has_manager_domain': True,
                 'has_required_entries': False,
-                'missing_entries': ['google.com, pub-6193096344573365, DIRECT, f08c47fec0942fa0', 'google.com, pub-6193096344573365, RESELLER, f08c47fec0942fa0'],
-                'errors': ['Empty file']
+                'missing_entries': required_entries,
+                'found_entries': [],
+                'errors': ['Empty file'],
             }
-        
+
         lines = content.strip().split('\n')
-        
-        # Only check for these 2 required entries
-        required_entries = [
-            'google.com, pub-6193096344573365, DIRECT, f08c47fec0942fa0',
-            'google.com, pub-6193096344573365, RESELLER, f08c47fec0942fa0'
-        ]
-        
+
         found_entries = []
-        missing_entries = required_entries.copy()
-        
+        missing_entries = list(required_entries)
+
         for line in lines:
             line = line.strip()
-            
-            # Skip empty lines and comments
             if not line or line.startswith('#'):
                 continue
-            
-            # Check if this line matches any required entry (exact match after normalizing spaces)
-            line_normalized = ','.join([p.strip() for p in line.split(',')])
-            
+
+            line_normalized = ','.join(p.strip() for p in line.split(','))
+
             for req_entry in required_entries:
-                req_normalized = ','.join([p.strip() for p in req_entry.split(',')])
+                req_normalized = ','.join(p.strip() for p in req_entry.split(','))
                 if req_normalized == line_normalized:
                     if req_entry in missing_entries:
                         missing_entries.remove(req_entry)
                         found_entries.append(req_entry)
                     break
-        
-        # Valid if both required entries are found
-        is_valid = len(missing_entries) == 0
-        
+
         return {
-            'is_valid': is_valid,
-            'has_owner_domain': True,  # Not checked - always true
-            'has_manager_domain': True,  # Not checked - always true
+            'is_valid': len(missing_entries) == 0,
+            'has_owner_domain': True,
+            'has_manager_domain': True,
             'has_required_entries': len(missing_entries) == 0,
             'found_entries': found_entries,
             'missing_entries': missing_entries,
-            'errors': []
+            'errors': [],
         }
-    
+
     @staticmethod
     def check_all_sites():
         """
-        Check ads.txt for all sites in the database
-        
-        Returns:
-            dict: {
-                'success': bool,
-                'checked': int,
-                'found': int,
-                'missing': int,
-                'errors': int,
-                'error': str or None
-            }
+        Check ads.txt for all sites, using the publisher's gam_type to
+        determine the correct pub ID.
         """
         try:
             from accounts.models import Site
-            
-            sites = Site.objects.all()
-            
+
+            sites = Site.objects.select_related('publisher').all()
+
             checked_count = 0
             found_count = 0
             missing_count = 0
             error_count = 0
-            
+
             for site in sites:
                 try:
-                    # Check ads.txt
-                    result = AdsTxtChecker.check_ads_txt(site.url)
-                    
-                    # Update site record
+                    publisher_gam_type = getattr(site.publisher, 'gam_type', 'mcm') or 'mcm'
+                    result = AdsTxtChecker.check_ads_txt(site.url, gam_type=publisher_gam_type)
+
                     site.ads_txt_status = result.get('status', 'missing')
                     site.ads_txt_last_checked = timezone.now()
                     site.save(update_fields=['ads_txt_status', 'ads_txt_last_checked'])
-                    
+
                     checked_count += 1
-                    
-                    if result.get('exists'):
+
+                    if result.get('status') == 'added':
                         found_count += 1
-                        logger.debug(f"ads.txt found for {site.url}")
                     else:
                         missing_count += 1
-                        logger.debug(f"ads.txt missing for {site.url}: {result.get('error')}")
-                        
+
                 except Exception as e:
                     error_count += 1
-                    logger.error(f"❌ Error checking ads.txt for site {site.id}: {str(e)}")
-            
+                    logger.error(f"Error checking ads.txt for site {site.id}: {e}")
+
             return {
                 'success': True,
                 'checked': checked_count,
                 'found': found_count,
                 'missing': missing_count,
                 'errors': error_count,
-                'total': sites.count()
+                'total': sites.count(),
             }
-            
+
         except Exception as e:
-            error_msg = str(e)
-            logger.error(f"❌ Failed to check ads.txt for all sites: {error_msg}")
-            
+            logger.error(f"Failed to check ads.txt for all sites: {e}")
             return {
                 'success': False,
-                'error': f'Failed to check ads.txt: {error_msg}',
-                'checked': 0,
-                'found': 0,
-                'missing': 0,
-                'errors': 0
+                'error': f'Failed to check ads.txt: {e}',
+                'checked': 0, 'found': 0, 'missing': 0, 'errors': 0,
             }

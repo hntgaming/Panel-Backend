@@ -924,14 +924,18 @@ class SiteListView(generics.ListAPIView):
                 site_url__isnull=False
             ).exclude(site_url='').exclude(sites__isnull=False)
         
-        # Create Site records for publishers without sites
         for publisher in publishers_without_sites:
+            default_status = (
+                Site.GamStatus.READY
+                if getattr(publisher, 'gam_type', 'mcm') == 'o_and_o'
+                else Site.GamStatus.GETTING_READY
+            )
             Site.objects.get_or_create(
                 publisher=publisher,
                 url=publisher.site_url,
                 defaults={
-                    'gam_status': Site.GamStatus.GETTING_READY,
-                    'ads_txt_status': Site.AdsTxtStatus.MISSING
+                    'gam_status': default_status,
+                    'ads_txt_status': Site.AdsTxtStatus.MISSING,
                 }
             )
         

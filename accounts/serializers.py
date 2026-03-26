@@ -635,10 +635,18 @@ class PublicSignupSerializer(serializers.Serializer):
         
         # Create Site record
         from .models import Site
+        gam_type = user.gam_type or 'mcm'
+        if gam_type == 'o_and_o':
+            initial_gam_status = Site.GamStatus.READY
+        elif site_result.get('success'):
+            initial_gam_status = Site.GamStatus.GETTING_READY
+        else:
+            initial_gam_status = Site.GamStatus.NEEDS_ATTENTION
+
         site = Site.objects.create(
             publisher=user,
             url=validated_data['site_link'],
-            gam_status=Site.GamStatus.GETTING_READY if site_result.get('success') else Site.GamStatus.NEEDS_ATTENTION,
+            gam_status=initial_gam_status,
             gam_site_id=site_result.get('site_id') if site_result.get('success') else None,
             ads_txt_status=Site.AdsTxtStatus.MISSING
         )
