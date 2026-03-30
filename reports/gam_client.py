@@ -713,13 +713,20 @@ class GAMClientService:
             for site in sites:
                 try:
                     publisher_gam_type = getattr(site.publisher, 'gam_type', 'mcm') or 'mcm'
+
+                    if publisher_gam_type == 'o_and_o':
+                        if site.gam_status != Site.GamStatus.READY:
+                            site.gam_status = Site.GamStatus.READY
+                            site.save(update_fields=['gam_status'])
+                        synced_count += 1
+                        continue
+
                     if site.gam_site_id:
                         result = GAMClientService.get_site_status_from_gam(site_id=site.gam_site_id, gam_type=publisher_gam_type)
                     else:
                         result = GAMClientService.get_site_status_from_gam(site_url=site.url, gam_type=publisher_gam_type)
                     
                     if result.get('success'):
-                        # Update site status
                         new_status = result.get('status')
                         if new_status:
                             site.gam_status = new_status
@@ -728,19 +735,12 @@ class GAMClientService:
                         site.save(update_fields=['gam_status', 'gam_site_id'])
                         synced_count += 1
                     else:
-                        # If site not found in GAM, only update if it was previously marked as added
-                        # Otherwise, preserve the existing status (might be getting_ready from signup)
                         error_msg = result.get('error', '').lower()
                         if 'not found' in error_msg:
-                            # Only mark as needs_attention if it was previously marked as added or ready
-                            # If it's still getting_ready, keep it as getting_ready (might be pending GAM processing)
                             if site.gam_status in [Site.GamStatus.ADDED, Site.GamStatus.READY]:
                                 site.gam_status = Site.GamStatus.NEEDS_ATTENTION
                                 site.save(update_fields=['gam_status'])
                                 logger.warning(f"⚠️ Site {site.url} was marked as added/ready but not found in GAM, marking as needs_attention")
-                            else:
-                                # Keep existing status (probably getting_ready)
-                                pass
                         error_count += 1
                         logger.warning(f"⚠️ Failed to sync site {site.url}: {result.get('error')}")
                         
