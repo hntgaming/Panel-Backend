@@ -715,9 +715,22 @@ class GAMClientService:
                     publisher_gam_type = getattr(site.publisher, 'gam_type', 'mcm') or 'mcm'
 
                     if publisher_gam_type == 'o_and_o':
+                        if site.gam_site_id:
+                            if site.gam_status != Site.GamStatus.READY:
+                                site.gam_status = Site.GamStatus.READY
+                                site.save(update_fields=['gam_status'])
+                            synced_count += 1
+                            continue
+                        result = GAMClientService.get_site_status_from_gam(site_url=site.url, gam_type=publisher_gam_type)
+                        update_fields = []
+                        if result.get('success') and result.get('site_id'):
+                            site.gam_site_id = result['site_id']
+                            update_fields.append('gam_site_id')
                         if site.gam_status != Site.GamStatus.READY:
                             site.gam_status = Site.GamStatus.READY
-                            site.save(update_fields=['gam_status'])
+                            update_fields.append('gam_status')
+                        if update_fields:
+                            site.save(update_fields=update_fields)
                         synced_count += 1
                         continue
 
