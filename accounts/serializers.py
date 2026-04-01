@@ -356,16 +356,24 @@ class PublisherPermissionSerializer(serializers.ModelSerializer):
         fields = ['permission']
 
 
+class PublisherSiteMiniSerializer(serializers.ModelSerializer):
+    class Meta:
+        from .models import Site
+        model = Site
+        fields = ['id', 'url', 'gam_status', 'ads_txt_status']
+
+
 class PublisherListSerializer(serializers.ModelSerializer):
     full_name = serializers.CharField(source='get_full_name', read_only=True)
     gam_type_display = serializers.SerializerMethodField()
+    sites = PublisherSiteMiniSerializer(many=True, read_only=True)
     
     def get_gam_type_display(self, obj):
         return obj.get_gam_type_display() if hasattr(obj, 'get_gam_type_display') else obj.gam_type
     
     class Meta:
         model = User
-        fields = ['id', 'company_name', 'first_name', 'last_name', 'full_name', 'email', 'phone_number', 'status', 'date_joined', 'revenue_share_percentage', 'site_url', 'network_id', 'gam_type', 'gam_type_display']
+        fields = ['id', 'company_name', 'first_name', 'last_name', 'full_name', 'email', 'phone_number', 'status', 'date_joined', 'revenue_share_percentage', 'site_url', 'network_id', 'gam_type', 'gam_type_display', 'sites']
 
 
 class SiteSerializer(serializers.ModelSerializer):

@@ -687,7 +687,7 @@ def list_publishers(request):
     GET /api/auth/publishers/ - List all publishers
     """
     try:
-        publishers = User.objects.filter(role='publisher').order_by('-date_joined')
+        publishers = User.objects.filter(role='publisher').prefetch_related('sites').order_by('-date_joined')
         serializer = PublisherListSerializer(publishers, many=True)
         return Response(serializer.data)
     except Exception as e:
@@ -907,24 +907,21 @@ class SiteListView(generics.ListAPIView):
     serializer_class = SiteSerializer
     
     def get_queryset(self):
-        # Create Site records for publishers who don't have sites yet
         from .models import Site
         
         if self.request.user.is_admin_user:
-            # For admin: check all publishers
-            publishers_without_sites = User.objects.filter(
+            publishers_with_url = User.objects.filter(
                 role=User.UserRole.PUBLISHER,
                 site_url__isnull=False
-            ).exclude(site_url='').exclude(sites__isnull=False)
+            ).exclude(site_url='')
         else:
-            # For publisher: only check their own
-            publishers_without_sites = User.objects.filter(
+            publishers_with_url = User.objects.filter(
                 id=self.request.user.id,
                 role=User.UserRole.PUBLISHER,
                 site_url__isnull=False
-            ).exclude(site_url='').exclude(sites__isnull=False)
+            ).exclude(site_url='')
         
-        for publisher in publishers_without_sites:
+        for publisher in publishers_with_url:
             default_status = (
                 Site.GamStatus.READY
                 if getattr(publisher, 'gam_type', 'mcm') == 'o_and_o'
