@@ -19,6 +19,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from django.utils import timezone
 from django.db import transaction, connection
+from django.db.models import Q
 from django.conf import settings
 from googleads import ad_manager
 from googleads import errors as gam_errors
@@ -193,8 +194,9 @@ class GAMReportService:
                 role=User.UserRole.PUBLISHER,
                 status=StatusChoices.ACTIVE,
                 gam_type='o_and_o',
-                site_url__isnull=False,
-            ).exclude(site_url='')
+            ).filter(
+                Q(site_url__isnull=False) & ~Q(site_url='') | Q(sites__isnull=False)
+            ).distinct()
 
             eligible_publishers = list(chain(mcm_publishers, oo_publishers))
 
@@ -283,16 +285,7 @@ class GAMReportService:
     def _process_oo_publisher(publisher, date_from, date_to):
         from urllib.parse import urlparse
         from decouple import config as decouple_config
-
-        site_url = publisher.site_url
-        if not site_url:
-            return {'records_created': 0, 'records_updated': 0, 'status': 'skipped'}
-
-        parsed = urlparse(site_url) if '://' in site_url else urlparse(f'https://{site_url}')
-        domain = parsed.netloc or parsed.path.split('/')[0]
-        if domain.startswith('www.'):
-            domain = domain[4:]
-        domain = domain.rstrip('/').split(':')[0]
+        from accounts.models import Site
 
         oo_network_code = decouple_config('GAM_OO_NETWORK_CODE', default='23341212234')
 
@@ -303,19 +296,47 @@ class GAMReportService:
                 return {'records_created': 0, 'records_updated': 0, 'status': 'skipped'}
             raise
 
-        class _OOInvitation:
-            def __init__(self):
-                self.child_network_code = domain
-                self.delegation_type = 'OWNED_AND_OPERATED'
-                self.gam_type = 'o_and_o'
-                self.site_domain = domain
-                self.parent_network = type('P', (), {'network_code': oo_network_code, 'network_name': 'O&O Network'})()
-                self.publisher_name = publisher.company_name or publisher.email
-                self.publisher_id = publisher.id
+        def _url_to_domain(url):
+            parsed = urlparse(url) if '://' in url else urlparse(f'https://{url}')
+            d = parsed.netloc or parsed.path.split('/')[0]
+            if d.startswith('www.'):
+                d = d[4:]
+            return d.rstrip('/').split(':')[0]
 
-        return GAMReportService._fetch_all_dimensions_parallel(
-            client, _OOInvitation(), date_from, date_to
+        site_urls = list(
+            Site.objects.filter(publisher=publisher)
+            .values_list('url', flat=True)
         )
+        if not site_urls and publisher.site_url:
+            site_urls = [publisher.site_url]
+        if not site_urls:
+            return {'records_created': 0, 'records_updated': 0, 'status': 'skipped'}
+
+        total_created = 0
+        total_updated = 0
+
+        for url in site_urls:
+            domain = _url_to_domain(url)
+            if not domain:
+                continue
+
+            class _OOInvitation:
+                def __init__(self, _domain):
+                    self.child_network_code = _domain
+                    self.delegation_type = 'OWNED_AND_OPERATED'
+                    self.gam_type = 'o_and_o'
+                    self.site_domain = _domain
+                    self.parent_network = type('P', (), {'network_code': oo_network_code, 'network_name': 'O&O Network'})()
+                    self.publisher_name = publisher.company_name or publisher.email
+                    self.publisher_id = publisher.id
+
+            result = GAMReportService._fetch_all_dimensions_parallel(
+                client, _OOInvitation(domain), date_from, date_to
+            )
+            total_created += result.get('records_created', 0)
+            total_updated += result.get('records_updated', 0)
+
+        return {'records_created': total_created, 'records_updated': total_updated}
 
     # ------------------------------------------------------------------
     # CORE OPTIMIZATION: Parallel dimension fetching
