@@ -779,6 +779,495 @@ class GAMClientService:
                 'errors': 0
             }
     
+    # ------------------------------------------------------------------
+    # GAM Ad Unit Hierarchy — /{networkCode}/{domain}/{SlotName}
+    # Mirrors AdForge standard: domain parent + HnT slot children.
+    # ------------------------------------------------------------------
+
+    STANDARD_AD_UNITS = [
+        {
+            'name': 'Top_Leaderboard_ATF',
+            'code': 'Top_Leaderboard_ATF',
+            'description': 'Top Leaderboard',
+            'sizes': [
+                (300, 31), (300, 50), (300, 75), (300, 100), (300, 250),
+                (320, 50), (320, 100),
+                (728, 90), (728, 250),
+                (970, 66), (970, 90), (970, 250),
+            ],
+        },
+        {
+            'name': 'Bottom_BTF',
+            'code': 'Bottom_BTF',
+            'description': 'Bottom',
+            'sizes': [
+                (300, 31), (300, 50), (300, 75), (300, 100), (300, 250),
+                (320, 50), (320, 100),
+                (728, 90), (728, 250),
+                (970, 66), (970, 90), (970, 250),
+            ],
+        },
+        {
+            'name': 'Incontent_Lazy',
+            'code': 'Incontent_Lazy',
+            'description': 'In-Content',
+            'sizes': [
+                (300, 31), (300, 50), (300, 75), (300, 100), (300, 250),
+                (320, 50), (320, 100),
+                (250, 250), (336, 280),
+                (728, 90), (728, 250), (750, 100),
+            ],
+        },
+        {
+            'name': 'Sidebar_Top_ATF',
+            'code': 'Sidebar_Top_ATF',
+            'description': 'Sidebar Top',
+            'sizes': [
+                (300, 31), (300, 50), (300, 75), (300, 100), (300, 250),
+                (320, 50), (320, 100),
+            ],
+        },
+        {
+            'name': 'Sidebar_Bottom_BTF',
+            'code': 'Sidebar_Bottom_BTF',
+            'description': 'Sidebar Bottom',
+            'sizes': [
+                (300, 31), (300, 50), (300, 75), (300, 100), (300, 250),
+                (320, 50), (320, 100),
+                (120, 600), (160, 600), (300, 600),
+            ],
+        },
+        {
+            'name': 'Anchor_ATF',
+            'code': 'Anchor_ATF',
+            'description': 'Anchor',
+            'sizes': [
+                (300, 31), (300, 50), (300, 75), (300, 100), (300, 250),
+                (320, 50), (320, 100),
+                (728, 90), (970, 90),
+            ],
+        },
+        {
+            'name': 'interstitial',
+            'code': 'interstitial',
+            'description': 'interstitial',
+            'sizes': 'OUT_OF_PAGE',
+        },
+        {
+            'name': 'Reward',
+            'code': 'Reward',
+            'description': 'Reward',
+            'sizes': 'OUT_OF_PAGE',
+        },
+        {
+            'name': 'StickyOutstream',
+            'code': 'StickyOutstream',
+            'description': 'StickyOutstream',
+            'sizes': [(300, 250)],
+        },
+    ]
+
+    @staticmethod
+    def _build_ad_unit_sizes(template_sizes):
+        """Build adUnitSizes array for the GAM API."""
+        if template_sizes == 'OUT_OF_PAGE':
+            return [{
+                'size': {'width': 1, 'height': 1, 'isAspectRatio': False},
+                'environmentType': 'BROWSER',
+                'fullDisplayString': '1x1',
+            }]
+        return [
+            {
+                'size': {'width': w, 'height': h, 'isAspectRatio': False},
+                'environmentType': 'BROWSER',
+            }
+            for w, h in template_sizes
+        ]
+
+    @staticmethod
+    def _extract_sizes(ad_unit_obj):
+        """Extract (w, h) tuples from a GAM ad unit object."""
+        sizes = set()
+        ad_unit_sizes = getattr(ad_unit_obj, 'adUnitSizes', None) or (
+            ad_unit_obj.get('adUnitSizes', []) if isinstance(ad_unit_obj, dict) else []
+        )
+        for aus in ad_unit_sizes:
+            s = getattr(aus, 'size', None) or (aus.get('size') if isinstance(aus, dict) else None)
+            if s:
+                w = s.get('width') if isinstance(s, dict) else getattr(s, 'width', None)
+                h = s.get('height') if isinstance(s, dict) else getattr(s, 'height', None)
+                if w and h:
+                    sizes.add((int(w), int(h)))
+        return sizes
+
+    @staticmethod
+    def _build_size_set(template_sizes):
+        if template_sizes == 'OUT_OF_PAGE':
+            return {(1, 1)}
+        return set(template_sizes)
+
+    @staticmethod
+    def _find_ad_unit_by_name(inventory_service, name, parent_id=None):
+        """Find an ad unit by exact name, optionally scoped to a parent."""
+        from googleads import ad_manager
+        statement = ad_manager.StatementBuilder(version='v202511')
+        if parent_id:
+            statement.Where(
+                'parentId = :parentId AND name = :name'
+            ).WithBindVariable('parentId', int(parent_id)).WithBindVariable('name', name)
+        else:
+            statement.Where('name = :name').WithBindVariable('name', name)
+
+        try:
+            page = inventory_service.getAdUnitsByStatement(statement.ToStatement())
+            results = getattr(page, 'results', None) or (page.get('results', []) if isinstance(page, dict) else [])
+            if results:
+                return results[0]
+        except Exception as e:
+            logger.warning('Ad unit lookup "%s" failed: %s', name, e)
+        return None
+
+    @staticmethod
+    def _get_root_ad_unit_id(inventory_service):
+        """Get the effective root ad unit ID for the network."""
+        from googleads import ad_manager
+        statement = ad_manager.StatementBuilder(version='v202511')
+        statement.Where('parentId IS NULL')
+        page = inventory_service.getAdUnitsByStatement(statement.ToStatement())
+        results = getattr(page, 'results', None) or (page.get('results', []) if isinstance(page, dict) else [])
+        if not results:
+            raise RuntimeError('Cannot locate root ad unit for this network')
+        unit = results[0]
+        uid = getattr(unit, 'id', None) or (unit.get('id') if isinstance(unit, dict) else None)
+        return str(uid)
+
+    @staticmethod
+    def _ensure_domain_parent(inventory_service, domain, root_id):
+        """
+        Ensure the domain-level parent ad unit exists under root.
+        Returns the numeric parent ID.
+        """
+        existing = GAMClientService._find_ad_unit_by_name(inventory_service, domain)
+        if existing:
+            uid = getattr(existing, 'id', None) or (existing.get('id') if isinstance(existing, dict) else None)
+            return str(uid), False
+
+        parent_unit = {
+            'name': domain,
+            'adUnitCode': domain,
+            'description': f'Parent ad unit for {domain}',
+            'parentId': root_id,
+            'targetWindow': 'BLANK',
+            'adUnitSizes': [{
+                'size': {'width': 300, 'height': 250, 'isAspectRatio': False},
+                'environmentType': 'BROWSER',
+            }],
+        }
+        try:
+            created = inventory_service.createAdUnits([parent_unit])
+            if created and len(created) > 0:
+                uid = getattr(created[0], 'id', None) or (created[0].get('id') if isinstance(created[0], dict) else None)
+                logger.info('Created parent ad unit "%s" -> ID %s', domain, uid)
+                return str(uid), True
+        except Exception as e:
+            error_msg = str(e)
+            if 'UniqueError' in error_msg or 'ALREADY_EXISTS' in error_msg.upper():
+                retry = GAMClientService._find_ad_unit_by_name(inventory_service, domain)
+                if retry:
+                    uid = getattr(retry, 'id', None) or (retry.get('id') if isinstance(retry, dict) else None)
+                    return str(uid), False
+            raise
+
+        return root_id, False
+
+    @staticmethod
+    def _get_or_create_ad_unit(inventory_service, parent_id, name, code=None,
+                               description='', sizes=None):
+        """
+        Find an existing ad unit by name under parent, or create it.
+        Returns (id_str, created_bool).
+        """
+        existing = GAMClientService._find_ad_unit_by_name(inventory_service, name, int(parent_id))
+        if existing:
+            eid = getattr(existing, 'id', None) or (existing.get('id') if isinstance(existing, dict) else None)
+            return str(eid), False
+
+        ad_unit = {
+            'name': name,
+            'adUnitCode': code or name,
+            'description': description,
+            'targetWindow': 'BLANK',
+            'parentId': parent_id,
+            'adUnitSizes': sizes or [{
+                'size': {'width': 300, 'height': 250, 'isAspectRatio': False},
+                'environmentType': 'BROWSER',
+            }],
+        }
+        try:
+            created = inventory_service.createAdUnits([ad_unit])
+            if created and len(created) > 0:
+                uid = getattr(created[0], 'id', None) or (created[0].get('id') if isinstance(created[0], dict) else None)
+                return str(uid), True
+        except Exception as e:
+            error_msg = str(e)
+            if 'UniqueError' in error_msg or 'ALREADY_EXISTS' in error_msg.upper():
+                retry = GAMClientService._find_ad_unit_by_name(inventory_service, name, int(parent_id))
+                if retry:
+                    eid = getattr(retry, 'id', None) or (retry.get('id') if isinstance(retry, dict) else None)
+                    return str(eid), False
+            raise
+        raise RuntimeError(f'Empty response creating ad unit "{name}"')
+
+    @staticmethod
+    def create_ad_unit_hierarchy(network_code, domain, gam_type='mcm',
+                                 publisher_id=None, property_id=None,
+                                 use_templates=True, custom_units=None,
+                                 parent_ad_unit_id=None):
+        """
+        Create the 4-level ad unit hierarchy in GAM:
+            root -> {domain} -> pub_{publisher_id} -> {property_id} -> {SlotName}
+
+        Produces paths like:
+            /{networkCode}/{domain}/pub_42/prop_42_example_com/Top_Leaderboard_ATF
+
+        Idempotent: skips existing units, updates sizes if mismatched.
+
+        Parameters
+        ----------
+        network_code : str
+            GAM network code.
+        domain : str
+            Publisher domain (e.g. example.com). Top-level ad unit under root.
+        gam_type : str
+            'mcm' or 'o_and_o'.
+        publisher_id : int or str
+            Internal publisher ID for pub_{id} level.
+        property_id : str
+            Internal property ID for the prop_{id} level (e.g. prop_42_example_com).
+        use_templates : bool
+            If True, creates the standard HnT slots.
+        custom_units : list[dict] or None
+            Additional custom units: [{'name': ..., 'code': ..., 'sizes': [...]}].
+        parent_ad_unit_id : str or None
+            Override the domain parent ad unit ID.
+        """
+        try:
+            client = GAMClientService.get_googleads_client(network_code, gam_type=gam_type)
+            inventory_service = client.GetService('InventoryService', version='v202511')
+
+            results = []
+            errors = []
+
+            # Level 1: {domain} under root
+            if parent_ad_unit_id and str(parent_ad_unit_id).isdigit():
+                domain_id = str(parent_ad_unit_id)
+                domain_created = False
+            else:
+                root_id = GAMClientService._get_root_ad_unit_id(inventory_service)
+                domain_id, domain_created = GAMClientService._ensure_domain_parent(
+                    inventory_service, domain, root_id
+                )
+
+            results.append({
+                'level': 'domain',
+                'name': domain,
+                'id': domain_id,
+                'created': domain_created,
+                'ad_unit_path': f'/{network_code}/{domain}',
+            })
+
+            # The parent for slots defaults to domain
+            slot_parent_id = domain_id
+            path_prefix = f'/{network_code}/{domain}'
+
+            # Level 2: pub_{publisher_id} (if provided)
+            if publisher_id is not None:
+                pub_name = f'pub_{publisher_id}'
+                try:
+                    pub_id, pub_created = GAMClientService._get_or_create_ad_unit(
+                        inventory_service, domain_id, pub_name,
+                        description=f'Publisher {publisher_id}',
+                    )
+                    results.append({
+                        'level': 'publisher',
+                        'name': pub_name,
+                        'id': pub_id,
+                        'created': pub_created,
+                        'ad_unit_path': f'{path_prefix}/{pub_name}',
+                    })
+                    slot_parent_id = pub_id
+                    path_prefix = f'{path_prefix}/{pub_name}'
+                except Exception as e:
+                    return {
+                        'success': False,
+                        'error': f'Failed to create/find "{pub_name}" ad unit: {e}',
+                        'created_units': results,
+                        'errors': [str(e)],
+                    }
+
+            # Level 3: {property_id} (if provided)
+            if property_id is not None:
+                prop_name = str(property_id)
+                if not prop_name.startswith('prop_'):
+                    prop_name = f'prop_{prop_name}'
+                try:
+                    prop_unit_id, prop_created = GAMClientService._get_or_create_ad_unit(
+                        inventory_service, slot_parent_id, prop_name,
+                        description=f'Property {property_id}',
+                    )
+                    results.append({
+                        'level': 'property',
+                        'name': prop_name,
+                        'id': prop_unit_id,
+                        'created': prop_created,
+                        'ad_unit_path': f'{path_prefix}/{prop_name}',
+                    })
+                    slot_parent_id = prop_unit_id
+                    path_prefix = f'{path_prefix}/{prop_name}'
+                except Exception as e:
+                    return {
+                        'success': False,
+                        'error': f'Failed to create/find "{prop_name}" ad unit: {e}',
+                        'created_units': results,
+                        'errors': [str(e)],
+                    }
+
+            # Level 4: Standard slots (and custom units)
+            units_to_create = []
+            if use_templates:
+                units_to_create.extend(GAMClientService.STANDARD_AD_UNITS)
+            if custom_units:
+                for cu in custom_units:
+                    raw_sizes = cu.get('sizes', [{'width': 300, 'height': 250}])
+                    if isinstance(raw_sizes, list) and raw_sizes and isinstance(raw_sizes[0], dict):
+                        sizes = [(s.get('width', 300), s.get('height', 250)) for s in raw_sizes]
+                    elif isinstance(raw_sizes, list) and raw_sizes and isinstance(raw_sizes[0], (list, tuple)):
+                        sizes = [tuple(s) for s in raw_sizes]
+                    else:
+                        sizes = raw_sizes
+                    units_to_create.append({
+                        'name': cu['name'],
+                        'code': cu.get('code', cu['name']),
+                        'description': cu.get('description', ''),
+                        'sizes': sizes,
+                    })
+
+            for template in units_to_create:
+                tpl_name = template['name']
+                tpl_code = template.get('code', tpl_name)
+                full_path = f'{path_prefix}/{tpl_name}'
+                try:
+                    existing = GAMClientService._find_ad_unit_by_name(
+                        inventory_service, tpl_name, int(slot_parent_id)
+                    )
+
+                    if existing:
+                        existing_sizes = GAMClientService._extract_sizes(existing)
+                        expected_sizes = GAMClientService._build_size_set(template['sizes'])
+
+                        if existing_sizes == expected_sizes:
+                            eid = getattr(existing, 'id', None) or (existing.get('id') if isinstance(existing, dict) else None)
+                            results.append({
+                                'level': 'slot',
+                                'name': tpl_name,
+                                'id': str(eid),
+                                'created': False,
+                                'status': 'already_exists',
+                                'message': 'Sizes match — skipped',
+                                'ad_unit_path': full_path,
+                            })
+                            continue
+
+                        try:
+                            if hasattr(existing, '__dict__'):
+                                existing.adUnitSizes = GAMClientService._build_ad_unit_sizes(template['sizes'])
+                            else:
+                                existing['adUnitSizes'] = GAMClientService._build_ad_unit_sizes(template['sizes'])
+                            inventory_service.updateAdUnits([existing])
+                            eid = getattr(existing, 'id', None) or (existing.get('id') if isinstance(existing, dict) else None)
+                            results.append({
+                                'level': 'slot',
+                                'name': tpl_name,
+                                'id': str(eid),
+                                'created': False,
+                                'status': 'updated',
+                                'message': 'Sizes updated to match template',
+                                'ad_unit_path': full_path,
+                            })
+                        except Exception as upd_err:
+                            eid = getattr(existing, 'id', None) or (existing.get('id') if isinstance(existing, dict) else None)
+                            results.append({
+                                'level': 'slot',
+                                'name': tpl_name,
+                                'id': str(eid),
+                                'created': False,
+                                'status': 'size_mismatch',
+                                'message': f'Size update failed: {upd_err}',
+                                'ad_unit_path': full_path,
+                            })
+                        continue
+
+                    ad_unit = {
+                        'name': tpl_name,
+                        'adUnitCode': tpl_code,
+                        'description': template.get('description', ''),
+                        'targetWindow': 'BLANK',
+                        'parentId': slot_parent_id,
+                        'adUnitSizes': GAMClientService._build_ad_unit_sizes(template['sizes']),
+                    }
+                    created_units = inventory_service.createAdUnits([ad_unit])
+                    if created_units and len(created_units) > 0:
+                        unit = created_units[0]
+                        uid = getattr(unit, 'id', None) or (unit.get('id') if isinstance(unit, dict) else None)
+                        results.append({
+                            'level': 'slot',
+                            'name': tpl_name,
+                            'id': str(uid),
+                            'created': True,
+                            'status': 'created',
+                            'ad_unit_path': full_path,
+                        })
+                        logger.info('Created ad unit: %s (ID: %s)', tpl_name, uid)
+                    else:
+                        results.append({
+                            'level': 'slot',
+                            'name': tpl_name,
+                            'id': None,
+                            'created': False,
+                            'status': 'empty_response',
+                            'ad_unit_path': full_path,
+                        })
+
+                except Exception as e:
+                    errors.append(f'{tpl_name}: {e}')
+                    logger.error('Failed to process ad unit %s: %s', tpl_name, e)
+                    results.append({
+                        'level': 'slot',
+                        'name': tpl_name,
+                        'id': None,
+                        'created': False,
+                        'status': 'error',
+                        'message': str(e)[:300],
+                        'ad_unit_path': full_path,
+                    })
+
+            return {
+                'success': True,
+                'created_units': results,
+                'errors': errors,
+                'network_code': network_code,
+                'domain': domain,
+            }
+
+        except Exception as e:
+            logger.error(f'Failed to create ad unit hierarchy: {e}')
+            return {
+                'success': False,
+                'error': str(e),
+                'created_units': [],
+                'errors': [str(e)],
+            }
+
     @staticmethod
     def fetch_network_ids_for_publishers(publisher_emails):
         """

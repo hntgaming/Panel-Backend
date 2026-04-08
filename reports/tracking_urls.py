@@ -29,4 +29,7 @@ urlpatterns = [
 
     # Auto-setup
     path('auto-setup/', views.AutoCreatePropertyPlacementsView.as_view(), name='auto-setup'),
+
+    # GAM ad unit hierarchy auto-creation
+    path('gam-ad-units/', views.CreateGAMAdUnitHierarchyView.as_view(), name='gam-ad-units'),
 ]

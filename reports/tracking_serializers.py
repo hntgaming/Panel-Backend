@@ -105,6 +105,10 @@ class TagGenerationSerializer(serializers.Serializer):
     div_id = serializers.CharField(max_length=100, required=False, allow_blank=True)
     lazy_load = serializers.BooleanField(required=False, default=True)
     collapse_empty = serializers.BooleanField(required=False, default=True)
+    domain = serializers.CharField(max_length=255, required=False, allow_blank=True,
+                                   help_text="Publisher domain for ad unit path (e.g. example.com)")
+    slot_name = serializers.CharField(max_length=150, required=False, allow_blank=True,
+                                      help_text="GAM slot name (e.g. Top_Leaderboard_ATF)")
 
 
 class PassbackTagSerializer(serializers.Serializer):
@@ -117,3 +121,7 @@ class PassbackTagSerializer(serializers.Serializer):
     source_type = serializers.CharField(max_length=30, required=False, default='gam360_passback')
     env = serializers.CharField(max_length=10, required=False, default='web')
     custom_ad_unit_path = serializers.CharField(max_length=500, required=False, allow_blank=True)
+    domain = serializers.CharField(max_length=255, required=False, allow_blank=True,
+                                   help_text="Publisher domain for ad unit path (e.g. example.com)")
+    slot_name = serializers.CharField(max_length=150, required=False, allow_blank=True,
+                                      help_text="GAM slot name (e.g. Top_Leaderboard_ATF)")

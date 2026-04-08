@@ -20,17 +20,34 @@ logger = logging.getLogger(__name__)
 GPT_LIBRARY_URL = 'https://securepubads.g.doubleclick.net/tag/js/gpt.js'
 
 
-def generate_ad_unit_path(network_code, publisher_id, property_id, placement_name):
+def generate_ad_unit_path(network_code, domain, slot_name,
+                          publisher_id=None, property_id=None, **_kwargs):
     """
-    Build a structured GAM ad unit path.
-    Convention: /{network_code}/hnt/pub_{publisher_id}/{property_id}/{placement_name}
-    If property_id doesn't start with prop_, it's prefixed automatically.
+    Build a GAM ad unit path:
+        /{network_code}/{domain}/pub_{publisher_id}/prop_{property_id}/{slot_name}
+
+    Examples:
+        /23341212234/example.com/pub_42/prop_42_example_com/Top_Leaderboard_ATF
+        /23310681755/mysite.org/pub_7/prop_7_mysite_org/Bottom_BTF
     """
-    safe_placement = (placement_name or 'default').strip().lower().replace(' ', '_')
-    prop_segment = str(property_id)
-    if not prop_segment.startswith('prop_'):
-        prop_segment = f"prop_{prop_segment}"
-    return f"/{network_code}/hnt/pub_{publisher_id}/{prop_segment}/{safe_placement}"
+    safe_domain = (domain or 'unknown').strip().lower().rstrip('/')
+    if safe_domain.startswith(('http://', 'https://')):
+        from urllib.parse import urlparse
+        safe_domain = urlparse(safe_domain).netloc or safe_domain
+    if safe_domain.startswith('www.'):
+        safe_domain = safe_domain[4:]
+    safe_slot = (slot_name or 'Top_Leaderboard_ATF').strip()
+
+    segments = [f"/{network_code}/{safe_domain}"]
+    if publisher_id is not None:
+        segments.append(f"pub_{publisher_id}")
+    if property_id is not None:
+        prop_seg = str(property_id)
+        if not prop_seg.startswith('prop_'):
+            prop_seg = f"prop_{prop_seg}"
+        segments.append(prop_seg)
+    segments.append(safe_slot)
+    return '/'.join(segments)
 
 
 def generate_gpt_tag(
@@ -46,9 +63,13 @@ def generate_gpt_tag(
     div_id=None,
     lazy_load=True,
     collapse_empty=True,
+    domain=None,
+    slot_name=None,
 ):
     """
     Generate a complete GPT ad tag snippet with hnt_* key-values.
+
+    Ad unit path: /{network_code}/{domain}/pub_{publisher_id}/{property_id}/{slot_name}
 
     Returns a dict with:
       - head_js: JS to include in <head>
@@ -56,8 +77,11 @@ def generate_gpt_tag(
       - ad_unit_path: the resolved ad unit path
       - targeting: dict of key-values being set
     """
+    effective_slot = slot_name or placement_name
+    effective_domain = domain or 'unknown'
     ad_unit_path = custom_ad_unit_path or generate_ad_unit_path(
-        network_code, publisher_id, property_id, placement_name
+        network_code, effective_domain, effective_slot,
+        publisher_id=publisher_id, property_id=property_id,
     )
 
     if not div_id:
@@ -123,6 +147,8 @@ def generate_passback_tag(
     source_type='gam360_passback',
     env='web',
     custom_ad_unit_path=None,
+    domain=None,
+    slot_name=None,
 ):
     """
     Generate a passback / fallback tag for GAM 360 demand.
@@ -131,12 +157,13 @@ def generate_passback_tag(
     slot definition, and key-values — designed to be pasted into a third-party
     ad server's passback creative.
 
-    The key difference from a standard tag: hnt_source defaults to
-    'gam360_passback' and the tag is designed to work inside iframes /
-    SafeFrame without relying on parent page context.
+    Ad unit path: /{network_code}/{domain}/pub_{publisher_id}/{property_id}/{slot_name}
     """
+    effective_slot = slot_name or placement_name
+    effective_domain = domain or 'unknown'
     ad_unit_path = custom_ad_unit_path or generate_ad_unit_path(
-        network_code, publisher_id, property_id, placement_name
+        network_code, effective_domain, effective_slot,
+        publisher_id=publisher_id, property_id=property_id,
     )
 
     sizes = _parse_ad_sizes(ad_size)
@@ -205,7 +232,8 @@ def generate_passback_tag(
     }
 
 
-def generate_multi_slot_page(slots, network_code, publisher_id, property_id, env='web'):
+def generate_multi_slot_page(slots, network_code, publisher_id, property_id,
+                             env='web', domain=None):
     """
     Generate a multi-slot page setup with a single GPT library load and
     multiple slot definitions — more efficient than individual tags.
@@ -213,10 +241,13 @@ def generate_multi_slot_page(slots, network_code, publisher_id, property_id, env
     Parameters
     ----------
     slots : list of dict
-        Each dict: {placement_id, placement_name, ad_size, source_type?, div_id?}
+        Each dict: {placement_id, placement_name, ad_size, source_type?, div_id?, slot_name?}
+    domain : str
+        Publisher domain for the ad unit path.
 
     Returns a dict with head_js and list of body_snippets.
     """
+    effective_domain = domain or 'unknown'
     slot_definitions = []
     body_snippets = []
 
@@ -226,9 +257,11 @@ def generate_multi_slot_page(slots, network_code, publisher_id, property_id, env
         ad_size = slot['ad_size']
         src = slot.get('source_type', 'mcm_direct')
         div_id = slot.get('div_id') or f"hnt-ad-{i}-{plc_name.lower().replace(' ', '-')}"
+        effective_slot = slot.get('slot_name') or plc_name
 
         ad_unit_path = generate_ad_unit_path(
-            network_code, publisher_id, property_id, plc_name
+            network_code, effective_domain, effective_slot,
+            publisher_id=publisher_id, property_id=property_id,
         )
         sizes = _parse_ad_sizes(ad_size)
         size_js = _sizes_to_js(sizes)
