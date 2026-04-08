@@ -101,11 +101,11 @@ class ReportDataListView(generics.ListAPIView):
         
         child_network = self.request.query_params.get('child_network')
         if child_network:
-            queryset = queryset.filter(parent_network_code=child_network)
+            queryset = queryset.filter(child_network_code=child_network)
         
         publisher_id = self.request.query_params.get('publisher')
         if publisher_id:
-            queryset = queryset.filter(parent_network_code=publisher_id)
+            queryset = queryset.filter(publisher_id=publisher_id)
         
         dimension_type = self.request.query_params.get('dimension_type')
         if dimension_type:
@@ -748,6 +748,7 @@ class UnifiedReportsQueryView(APIView):
         child_network values match child_network_code in the DB:
           MCM -> the publisher's GAM network ID
           O&O -> the publisher's site domain
+        Unified tracking filters: property_id, placement_id, source_type
         """
         for filter_key, filter_values in filters.items():
             if not filter_values:
@@ -759,6 +760,12 @@ class UnifiedReportsQueryView(APIView):
                 queryset = queryset.filter(child_network_code__in=filter_values)
             elif filter_key == 'dimension_type':
                 queryset = queryset.filter(dimension_type__in=filter_values)
+            elif filter_key == 'property_id':
+                queryset = queryset.filter(property_id_tracking__in=filter_values)
+            elif filter_key == 'placement_id':
+                queryset = queryset.filter(placement_id_tracking__in=filter_values)
+            elif filter_key == 'source_type':
+                queryset = queryset.filter(source_type__in=filter_values)
         
         return queryset
     
@@ -792,7 +799,10 @@ class UnifiedReportsQueryView(APIView):
                 'parent_network_code': record.parent_network_code,
                 'child_network_code': record.child_network_code,
                 'child_network_name': record.parent_network_code,
-                'parent_network_code': record.parent_network_code,
+                'property_id': record.property_id_tracking,
+                'placement_id': record.placement_id_tracking,
+                'source_type': record.source_type,
+                'attribution_method': record.attribution_method,
             }
             
             # Add requested metrics
@@ -812,7 +822,7 @@ class UnifiedReportsQueryView(APIView):
                 elif metric == 'revenue_usd':
                     result_data['revenue_usd'] = record.revenue_usd
                 elif metric == 'total_revenue_usd':
-                    result_data['total_revenue_usd'] = record.total_revenue_usd
+                    result_data['total_revenue_usd'] = record.revenue_usd
             
             return result_data
 

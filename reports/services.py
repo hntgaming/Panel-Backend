@@ -588,6 +588,7 @@ class GAMReportService:
                     'ctr': _quantize(ctr, 2),
                     'total_ad_requests': total_ad_requests,
                     'viewable_impressions_rate': _quantize(viewable_rate, 2),
+                    '_raw_row': row,
                 })
             except Exception as e:
                 logger.warning(f"Row processing error: {e}")
@@ -595,6 +596,26 @@ class GAMReportService:
 
         if is_oo and dimension_key != 'site':
             records = _aggregate_oo_records(records)
+
+        # Run unified attribution on each record
+        try:
+            from .attribution import resolve_attribution
+            for rec in records:
+                raw_row = rec.pop('_raw_row', {})
+                attr = resolve_attribution(raw_row, invitation)
+                attr_dict = attr.to_dict()
+                # Only set if attribution found something; preserve existing publisher_id
+                if attr_dict.get('property_id_tracking'):
+                    rec['property_id_tracking'] = attr_dict['property_id_tracking']
+                if attr_dict.get('placement_id_tracking'):
+                    rec['placement_id_tracking'] = attr_dict['placement_id_tracking']
+                if attr_dict.get('source_type'):
+                    rec['source_type'] = attr_dict['source_type']
+                rec['attribution_method'] = attr_dict.get('attribution_method', 'legacy')
+        except Exception as e:
+            logger.warning(f"Attribution pass failed (non-fatal): {e}")
+            for rec in records:
+                rec.pop('_raw_row', None)
 
         return records
 
@@ -619,6 +640,8 @@ class GAMReportService:
             'parent_network_code', 'publisher_id', 'currency',
             'impressions', 'revenue', 'ecpm', 'clicks', 'ctr',
             'total_ad_requests', 'viewable_impressions_rate',
+            'property_id_tracking', 'placement_id_tracking',
+            'source_type', 'attribution_method',
         ]
 
         for i in range(0, len(records_data), BATCH_SIZE):
@@ -640,6 +663,10 @@ class GAMReportService:
                     total_ad_requests=r.get('total_ad_requests', 0),
                     eligible_ad_requests=r.get('eligible_ad_requests', 0),
                     viewable_impressions_rate=r['viewable_impressions_rate'],
+                    property_id_tracking=r.get('property_id_tracking'),
+                    placement_id_tracking=r.get('placement_id_tracking'),
+                    source_type=r.get('source_type'),
+                    attribution_method=r.get('attribution_method'),
                 )
                 for r in batch
             ]

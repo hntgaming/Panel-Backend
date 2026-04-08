@@ -12,14 +12,16 @@ def api_root(request):
     """
     API root endpoint - provides API information
     """
+    from django.conf import settings as django_settings
     return JsonResponse({
         'message': 'Welcome to H&T GAMING - Managed Inventory API',
-        'version': '1.0',
+        'version': '2.0',
         'endpoints': {
             'authentication': '/api/auth/',
-            # GAM endpoints removed - simplified for managed inventory
+            'reports': '/api/reports/',
+            'tracking': '/api/reports/tracking/',
             'admin_panel': '/admin/',
-            'api_docs': '/api/docs/' if hasattr(settings, 'DEBUG') and settings.DEBUG else None,
+            'api_docs': '/api/docs/' if django_settings.DEBUG else None,
         },
         'auth_info': {
             'type': 'JWT Bearer Token',

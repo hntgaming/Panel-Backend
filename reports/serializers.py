@@ -9,60 +9,43 @@ User = get_user_model()
 
 
 class MasterMetaDataSerializer(serializers.ModelSerializer):
-    """
-    🆕 UPDATED: Serializer for MasterMetaData with enhanced fields and new unknown metrics
-    """
-    parent_network_name = serializers.CharField(source='parent_network.network_name', read_only=True)
-    parent_network_code = serializers.CharField(source='parent_network.network_code', read_only=True)
-    child_network_name = serializers.CharField(source='invitation.child_network_name', read_only=True)
-    
-    # Existing calculated fields
     fill_rate = serializers.ReadOnlyField()
     revenue_usd = serializers.ReadOnlyField()
-    
-    # Calculated fields for unknown revenue
-    # Unknown metrics removed for Managed Inventory Publisher Dashboard
-    total_revenue_usd = serializers.ReadOnlyField()
 
-    # Partner information
-    partner_email = serializers.SerializerMethodField()
-    partner_name = serializers.SerializerMethodField()
+    publisher_email = serializers.SerializerMethodField()
+    publisher_name = serializers.SerializerMethodField()
 
     class Meta:
         model = MasterMetaData
         fields = [
             'id', 'date', 'dimension_type', 'dimension_value', 'currency',
-            'parent_network', 'parent_network_name', 'parent_network_code',
-            'invitation', 'child_network_code', 'child_network_name',
-            'partner_id', 'partner_email', 'partner_name',
-            
-            # Existing metrics
+            'parent_network_code', 'child_network_code',
+            'publisher_id', 'publisher_email', 'publisher_name',
+
             'impressions', 'revenue', 'revenue_usd', 'ecpm', 'clicks', 'ctr',
             'eligible_ad_requests', 'viewable_impressions_rate', 'total_ad_requests',
             'fill_rate',
-            
-            # Unknown metrics removed for Managed Inventory Publisher Dashboard
-            'total_revenue_usd',
-            
-            'created_at', 'updated_at'
+
+            'property_id_tracking', 'placement_id_tracking',
+            'source_type', 'attribution_method',
+
+            'created_at', 'updated_at',
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
 
-    def get_partner_email(self, obj):
-        """Get partner email if assigned"""
-        if obj.partner_id:
+    def get_publisher_email(self, obj):
+        if obj.publisher_id:
             try:
-                user = User.objects.get(id=obj.partner_id)
+                user = User.objects.get(id=obj.publisher_id)
                 return user.email
             except User.DoesNotExist:
                 return None
         return None
 
-    def get_partner_name(self, obj):
-        """Get partner full name if assigned"""
-        if obj.partner_id:
+    def get_publisher_name(self, obj):
+        if obj.publisher_id:
             try:
-                user = User.objects.get(id=obj.partner_id)
+                user = User.objects.get(id=obj.publisher_id)
                 return user.get_full_name()
             except User.DoesNotExist:
                 return None
@@ -174,10 +157,11 @@ class UnifiedReportsQuerySerializer(serializers.Serializer):
     )
     
     def validate_metrics(self, value):
-        """Validate metrics string - unknown metrics removed"""
         valid_metrics = [
             'impressions', 'revenue', 'ecpm', 'clicks', 'ctr', 'fill_rate',
-            'total_ad_requests', 'viewable_impressions_rate'
+            'total_ad_requests', 'viewable_impressions_rate',
+            'eligible_ad_requests', 'total_revenue_usd', 'revenue_usd',
+            'match_rate',
         ]
         
         metrics_list = [m.strip() for m in value.split(',')]

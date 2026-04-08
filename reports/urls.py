@@ -2,6 +2,9 @@ from django.urls import path, include
 from . import views
 app_name = 'reports'
 urlpatterns = [
+    # Unified tracking subsystem
+    path('tracking/', include('reports.tracking_urls')),
+
     path(
         'trigger-sync/', 
         views.trigger_sync_view, 
