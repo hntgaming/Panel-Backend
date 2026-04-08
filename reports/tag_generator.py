@@ -23,10 +23,14 @@ GPT_LIBRARY_URL = 'https://securepubads.g.doubleclick.net/tag/js/gpt.js'
 def generate_ad_unit_path(network_code, publisher_id, property_id, placement_name):
     """
     Build a structured GAM ad unit path.
-    Convention: /{network_code}/hnt/pub_{publisher_id}/prop_{property_id}/{placement_name}
+    Convention: /{network_code}/hnt/pub_{publisher_id}/{property_id}/{placement_name}
+    If property_id doesn't start with prop_, it's prefixed automatically.
     """
     safe_placement = (placement_name or 'default').strip().lower().replace(' ', '_')
-    return f"/{network_code}/hnt/pub_{publisher_id}/prop_{property_id}/{safe_placement}"
+    prop_segment = str(property_id)
+    if not prop_segment.startswith('prop_'):
+        prop_segment = f"prop_{prop_segment}"
+    return f"/{network_code}/hnt/pub_{publisher_id}/{prop_segment}/{safe_placement}"
 
 
 def generate_gpt_tag(
