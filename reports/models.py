@@ -265,9 +265,9 @@ class MasterMetaData(models.Model):
 
     # Denormalized fields for fast filtering
     child_network_code = models.CharField(
-        max_length=20,
+        max_length=100,
         db_index=True,
-        help_text="Child network code for direct filtering"
+        help_text="Child network code or O&O domain for direct filtering"
     )
     publisher_id = models.IntegerField(
         null=True,
