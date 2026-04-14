@@ -29,22 +29,27 @@ core_metrics = [
     "AD_SERVER_WITHOUT_CPD_AVERAGE_ECPM"
 ]
 
-# Additional metrics that work with managed inventory
-extended_metrics = [
-    "TOTAL_PROGRAMMATIC_ELIGIBLE_AD_REQUESTS"  # Works with all dimensions, doesn't conflict
+# Ad-request metrics — TOTAL_AD_REQUESTS works reliably for overview/site/device
+# but can conflict with some dimension combos (adunit, inventoryFormat).
+# TOTAL_PROGRAMMATIC_ELIGIBLE_AD_REQUESTS is a safe alternative for all dimensions.
+ad_request_metrics = [
+    "TOTAL_AD_REQUESTS",
+    "TOTAL_PROGRAMMATIC_ELIGIBLE_AD_REQUESTS",
 ]
 
-# Updated dimension metrics for Managed Inventory Publisher Dashboard
-# Using core + extended metrics (TOTAL_AD_REQUESTS removed due to conflicts)
+ad_request_metrics_safe = [
+    "TOTAL_PROGRAMMATIC_ELIGIBLE_AD_REQUESTS",
+]
+
 dimension_metrics = {
-    "overview": core_metrics + extended_metrics,
-    "site": core_metrics + extended_metrics,
-    "trafficSource": core_metrics + extended_metrics,
-    "deviceCategory": core_metrics + extended_metrics,
-    "country": core_metrics + extended_metrics,
-    "adunit": core_metrics + extended_metrics,  # Will use AD_UNIT_ID for hierarchical path
-    "inventoryFormat": core_metrics + extended_metrics,
-    "browser": core_metrics + extended_metrics,
+    "overview": core_metrics + ad_request_metrics,
+    "site": core_metrics + ad_request_metrics,
+    "deviceCategory": core_metrics + ad_request_metrics,
+    "country": core_metrics + ad_request_metrics,
+    "trafficSource": core_metrics + ad_request_metrics_safe,
+    "adunit": core_metrics + ad_request_metrics_safe,
+    "inventoryFormat": core_metrics + ad_request_metrics_safe,
+    "browser": core_metrics + ad_request_metrics_safe,
 }
 
 # Default metrics for backward compatibility

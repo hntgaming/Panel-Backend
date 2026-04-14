@@ -407,10 +407,17 @@ class GAMReportService:
         """
         dim_metrics = list(dimension_metrics.get(dimension_key, metrics))
 
+        AD_REQ_METRICS = {'TOTAL_AD_REQUESTS', 'TOTAL_PROGRAMMATIC_ELIGIBLE_AD_REQUESTS'}
         metric_variants = [dim_metrics]
-        fallback = [m for m in dim_metrics if m != 'TOTAL_PROGRAMMATIC_ELIGIBLE_AD_REQUESTS']
-        if len(fallback) < len(dim_metrics):
-            metric_variants.append(fallback)
+        without_eligible = [m for m in dim_metrics if m != 'TOTAL_PROGRAMMATIC_ELIGIBLE_AD_REQUESTS']
+        if len(without_eligible) < len(dim_metrics):
+            metric_variants.append(without_eligible)
+        without_total = [m for m in dim_metrics if m != 'TOTAL_AD_REQUESTS']
+        if without_total != dim_metrics and without_total not in metric_variants:
+            metric_variants.append(without_total)
+        without_both = [m for m in dim_metrics if m not in AD_REQ_METRICS]
+        if without_both != dim_metrics:
+            metric_variants.append(without_both)
 
         last_error = None
         for variant in metric_variants:
@@ -552,7 +559,8 @@ class GAMReportService:
                 revenue = _micros_to_currency(row.get('AD_EXCHANGE_LINE_ITEM_LEVEL_REVENUE', 0))
                 clicks = _safe_int(row.get('AD_EXCHANGE_LINE_ITEM_LEVEL_CLICKS', 0))
                 total_ad_requests = _safe_int(row.get('TOTAL_AD_REQUESTS', 0))
-                total_ad_requests += _safe_int(row.get('TOTAL_PROGRAMMATIC_ELIGIBLE_AD_REQUESTS', 0))
+                if total_ad_requests == 0:
+                    total_ad_requests = _safe_int(row.get('TOTAL_PROGRAMMATIC_ELIGIBLE_AD_REQUESTS', 0))
 
                 api_ecpm = row.get('AD_EXCHANGE_LINE_ITEM_LEVEL_AVERAGE_ECPM', 0)
                 api_ctr = row.get('AD_EXCHANGE_LINE_ITEM_LEVEL_CTR', 0)
