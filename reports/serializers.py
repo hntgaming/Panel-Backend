@@ -26,9 +26,6 @@ class MasterMetaDataSerializer(serializers.ModelSerializer):
             'eligible_ad_requests', 'viewable_impressions_rate', 'total_ad_requests',
             'fill_rate',
 
-            'property_id_tracking', 'placement_id_tracking',
-            'source_type', 'attribution_method',
-
             'created_at', 'updated_at',
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']

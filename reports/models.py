@@ -276,44 +276,6 @@ class MasterMetaData(models.Model):
         help_text="Publisher assigned to this child network"
     )
 
-    # Unified tracking identity fields (nullable for backward compat with legacy data)
-    property_id_tracking = models.CharField(
-        max_length=100,
-        null=True,
-        blank=True,
-        db_index=True,
-        help_text="Internal property ID from tracking_properties",
-    )
-    placement_id_tracking = models.CharField(
-        max_length=150,
-        null=True,
-        blank=True,
-        db_index=True,
-        help_text="Internal placement ID from tracking_placements",
-    )
-    source_type = models.CharField(
-        max_length=30,
-        choices=SOURCE_TYPE_CHOICES,
-        null=True,
-        blank=True,
-        db_index=True,
-        help_text="Demand source classification",
-    )
-    attribution_method = models.CharField(
-        max_length=30,
-        null=True,
-        blank=True,
-        choices=[
-            ('key_value', 'Key-Value Match'),
-            ('ad_unit_path', 'Ad Unit Path Parse'),
-            ('gam_mapping', 'GAM Mapping Table'),
-            ('domain_match', 'Domain Match'),
-            ('legacy', 'Legacy Fallback'),
-            ('unattributed', 'Unattributed'),
-        ],
-        help_text="How this record was attributed to publisher/property/placement",
-    )
-
     # Dimension + Date for flexible reporting
     dimension_type = models.CharField(
         max_length=32, 
@@ -400,10 +362,6 @@ class MasterMetaData(models.Model):
             models.Index(fields=["date", "dimension_type", "publisher_id"]),
             models.Index(fields=["parent_network_code", "date"]),
             models.Index(fields=["child_network_code", "date"]),
-            models.Index(fields=["property_id_tracking", "date"]),
-            models.Index(fields=["placement_id_tracking", "date"]),
-            models.Index(fields=["source_type", "date"]),
-            models.Index(fields=["publisher_id", "property_id_tracking", "date"]),
         ]
         ordering = ['-date', 'dimension_type']
 
