@@ -14,6 +14,7 @@ import os
 import csv
 import io
 import time
+import threading
 import concurrent.futures
 from datetime import datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
@@ -31,12 +32,27 @@ from .constants import dimension_map, metrics, dimension_metrics
 
 logger = logging.getLogger(__name__)
 
-DIMENSION_WORKERS = 8
+DIMENSION_WORKERS = 4
 BATCH_SIZE = 1000
 MAX_RETRIES = 3
 RETRY_DELAY = 5
-QUOTA_RETRY_DELAY = 5
-MAX_QUOTA_RETRIES = 5
+QUOTA_RETRY_DELAY = 10
+MAX_QUOTA_RETRIES = 8
+
+_api_lock = threading.Lock()
+_MIN_REQUEST_INTERVAL = 0.15  # ~6-7 requests/sec across all threads
+_last_request_time = 0.0
+
+
+def _throttle():
+    """Global rate limiter — ensures minimum gap between GAM API calls."""
+    global _last_request_time
+    with _api_lock:
+        now = time.monotonic()
+        wait = _MIN_REQUEST_INTERVAL - (now - _last_request_time)
+        if wait > 0:
+            time.sleep(wait)
+        _last_request_time = time.monotonic()
 
 AUTH_ERROR_KEYWORDS = [
     'AuthenticationError.NO_NETWORKS_TO_ACCESS',
@@ -402,22 +418,15 @@ class GAMReportService:
     @staticmethod
     def _fetch_dimension_with_fallback(client, invitation, dimension_key, date_from, date_to):
         """
-        Fetch a single dimension report. If the primary metric set fails
-        (e.g. TOTAL_AD_REQUESTS not supported), retry with a fallback set.
+        Fetch a single dimension report.  If the full metric set fails,
+        retry once without the ad-request metric so the report still lands.
         """
         dim_metrics = list(dimension_metrics.get(dimension_key, metrics))
 
-        AD_REQ_METRICS = {'TOTAL_AD_REQUESTS', 'TOTAL_PROGRAMMATIC_ELIGIBLE_AD_REQUESTS'}
+        fallback = [m for m in dim_metrics if m != 'TOTAL_PROGRAMMATIC_ELIGIBLE_AD_REQUESTS']
         metric_variants = [dim_metrics]
-        without_eligible = [m for m in dim_metrics if m != 'TOTAL_PROGRAMMATIC_ELIGIBLE_AD_REQUESTS']
-        if len(without_eligible) < len(dim_metrics):
-            metric_variants.append(without_eligible)
-        without_total = [m for m in dim_metrics if m != 'TOTAL_AD_REQUESTS']
-        if without_total != dim_metrics and without_total not in metric_variants:
-            metric_variants.append(without_total)
-        without_both = [m for m in dim_metrics if m not in AD_REQ_METRICS]
-        if without_both != dim_metrics:
-            metric_variants.append(without_both)
+        if len(fallback) < len(dim_metrics):
+            metric_variants.append(fallback)
 
         last_error = None
         for variant in metric_variants:
@@ -429,6 +438,10 @@ class GAMReportService:
                 last_error = e
                 if _is_auth_error(str(e)):
                     return {'skipped_due_to_auth_error': True, 'records': []}
+                if 'EXCEEDED_QUOTA' in str(e):
+                    wait = QUOTA_RETRY_DELAY + (QUOTA_RETRY_DELAY * 0.5)
+                    logger.warning(f"Quota hit in fallback for {dimension_key}, sleeping {wait}s")
+                    time.sleep(wait)
                 logger.debug(f"Metric variant failed for {dimension_key}, trying fallback: {e}")
 
         raise last_error
@@ -475,18 +488,42 @@ class GAMReportService:
 
         report_job = {"reportQuery": report_query}
 
-        try:
-            report_downloader = client.GetDataDownloader(version="v202508")
-            report_job_id = report_downloader.WaitForReport(report_job)
-        except Exception as e:
-            if _is_auth_error(str(e)):
-                return {'skipped_due_to_auth_error': True, 'records': []}
-            raise
+        report_downloader = None
+        report_job_id = None
+        for _attempt in range(MAX_QUOTA_RETRIES):
+            try:
+                _throttle()
+                if report_downloader is None:
+                    report_downloader = client.GetDataDownloader(version="v202508")
+                report_job_id = report_downloader.WaitForReport(report_job)
+                break
+            except Exception as e:
+                if _is_auth_error(str(e)):
+                    return {'skipped_due_to_auth_error': True, 'records': []}
+                if 'EXCEEDED_QUOTA' in str(e) and _attempt < MAX_QUOTA_RETRIES - 1:
+                    wait = QUOTA_RETRY_DELAY * (2 ** _attempt)
+                    logger.warning(f"Quota hit (WaitForReport), retry {_attempt + 1} in {wait}s")
+                    time.sleep(wait)
+                    continue
+                raise
 
-        with tempfile.TemporaryFile() as fp:
-            report_downloader.DownloadReportToFile(report_job_id, 'GZIPPED_CSV', fp, include_totals_row=True)
-            fp.seek(0)
-            decompressed = gzip.decompress(fp.read()).decode('utf-8', errors='ignore')
+        for _attempt in range(MAX_QUOTA_RETRIES):
+            try:
+                _throttle()
+                with tempfile.TemporaryFile() as fp:
+                    report_downloader.DownloadReportToFile(
+                        report_job_id, 'GZIPPED_CSV', fp, include_totals_row=True
+                    )
+                    fp.seek(0)
+                    decompressed = gzip.decompress(fp.read()).decode('utf-8', errors='ignore')
+                break
+            except Exception as e:
+                if 'EXCEEDED_QUOTA' in str(e) and _attempt < MAX_QUOTA_RETRIES - 1:
+                    wait = QUOTA_RETRY_DELAY * (2 ** _attempt)
+                    logger.warning(f"Quota hit (Download), retry {_attempt + 1} in {wait}s")
+                    time.sleep(wait)
+                    continue
+                raise
 
         reader = csv.reader(io.StringIO(decompressed))
         rows = list(reader)
@@ -558,9 +595,7 @@ class GAMReportService:
                 impressions = _safe_int(row.get('AD_EXCHANGE_LINE_ITEM_LEVEL_IMPRESSIONS', 0))
                 revenue = _micros_to_currency(row.get('AD_EXCHANGE_LINE_ITEM_LEVEL_REVENUE', 0))
                 clicks = _safe_int(row.get('AD_EXCHANGE_LINE_ITEM_LEVEL_CLICKS', 0))
-                total_ad_requests = _safe_int(row.get('TOTAL_AD_REQUESTS', 0))
-                if total_ad_requests == 0:
-                    total_ad_requests = _safe_int(row.get('TOTAL_PROGRAMMATIC_ELIGIBLE_AD_REQUESTS', 0))
+                total_ad_requests = _safe_int(row.get('TOTAL_PROGRAMMATIC_ELIGIBLE_AD_REQUESTS', 0))
 
                 api_ecpm = row.get('AD_EXCHANGE_LINE_ITEM_LEVEL_AVERAGE_ECPM', 0)
                 api_ctr = row.get('AD_EXCHANGE_LINE_ITEM_LEVEL_CTR', 0)

@@ -19,10 +19,10 @@ from reports.gam_client import GAMClientService
 
 logger = logging.getLogger(__name__)
 
-QUOTA_RETRY_DELAY = 5
-MAX_QUOTA_RETRIES = 5
+QUOTA_RETRY_DELAY = 10
+MAX_QUOTA_RETRIES = 8
 DEFAULT_PARALLEL_ENABLED = True
-DEFAULT_MAX_WORKERS = 500
+DEFAULT_MAX_WORKERS = 15
 
 
 class Command(BaseCommand):
@@ -31,9 +31,8 @@ class Command(BaseCommand):
     def __init__(self):
         super().__init__()
         self._worker_lock = threading.Lock()
-        self._active_workers = 0
         self._completed_count = 0
-        self._total_accounts = 0
+        self._total_tasks = 0
 
     def add_arguments(self, parser):
         parser.add_argument('--date-from', type=str, help='Start date (YYYY-MM-DD)')
@@ -79,7 +78,6 @@ class Command(BaseCommand):
         if network_id:
             self.stdout.write(f'Targeting: {network_id}')
 
-        # Clear cached GAM clients from previous runs
         GAMClientService.clear_client_cache()
 
         try:
@@ -90,7 +88,7 @@ class Command(BaseCommand):
 
             if result['success']:
                 self.stdout.write(self.style.SUCCESS(
-                    f'Sync completed | ID: {result["sync_id"]} | '
+                    f'\nSync completed | ID: {result["sync_id"]} | '
                     f'OK: {result["successful_networks"]} | '
                     f'Fail: {result["failed_networks"]} | '
                     f'Created: {result["total_records_created"]} | '
@@ -128,68 +126,116 @@ class Command(BaseCommand):
             oo_qs = oo_qs.none()
 
         publisher_list = list(chain(mcm_qs, oo_qs))
-        self._total_accounts = len(publisher_list)
-        self._completed_count = 0
+        num_accounts = len(publisher_list)
 
         self.stdout.write(self.style.SUCCESS(
-            f'Found {self._total_accounts} eligible accounts | '
+            f'Found {num_accounts} eligible accounts | '
             f'MCM: {mcm_qs.count()} | O&O: {oo_qs.count()}'
         ))
 
-        if self._total_accounts == 0:
+        if num_accounts == 0:
             return {
                 'success': True, 'sync_id': 'no-accounts',
                 'successful_networks': 0, 'failed_networks': 0,
                 'total_records_created': 0, 'total_records_updated': 0,
             }
 
+        dates = []
+        d = date_from
+        while d <= date_to:
+            dates.append(d)
+            d += timedelta(days=1)
+
+        total_day_account_tasks = len(dates) * num_accounts
+        self._total_tasks = total_day_account_tasks
+        self._completed_count = 0
+
+        self.stdout.write(
+            f'Processing {len(dates)} day(s) x {num_accounts} accounts = '
+            f'{total_day_account_tasks} tasks | Workers: {max_workers}'
+        )
+
         start_time = time.time()
-        results = []
-        actual_workers = min(max_workers, self._total_accounts)
-        self.stdout.write(f'Spawning {actual_workers} workers for {self._total_accounts} accounts')
+        all_results = []
+        actual_workers = min(max_workers, total_day_account_tasks)
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=actual_workers) as executor:
-            future_to_pub = {
-                executor.submit(self._process_single_account, pub, date_from, date_to): pub
-                for pub in publisher_list
-            }
+            future_map = {}
+            for single_date in dates:
+                for pub in publisher_list:
+                    future = executor.submit(
+                        self._process_single_account, pub, single_date, single_date
+                    )
+                    future_map[future] = (pub, single_date)
 
-            for future in concurrent.futures.as_completed(future_to_pub):
-                publisher = future_to_pub[future]
+            for future in concurrent.futures.as_completed(future_map):
+                publisher, task_date = future_map[future]
                 try:
                     result = future.result()
-                    results.append(result)
-
-                    with self._worker_lock:
-                        self._completed_count += 1
-                        if self._completed_count % 5 == 0 or self._completed_count == self._total_accounts:
-                            elapsed = time.time() - start_time
-                            rate = self._completed_count / elapsed if elapsed > 0 else 0
-                            self.stdout.write(
-                                f'Progress: {self._completed_count}/{self._total_accounts} '
-                                f'({self._completed_count * 100 // self._total_accounts}%) - '
-                                f'{rate:.1f} acct/s'
-                            )
+                    result['date'] = str(task_date)
+                    all_results.append(result)
                 except Exception as e:
                     label = publisher.network_id or publisher.site_url or publisher.email
-                    self.stdout.write(self.style.ERROR(f'{label}: {e}'))
-                    results.append({
-                        'account': label, 'success': False,
-                        'error': str(e), 'records_created': 0,
+                    self.stdout.write(self.style.ERROR(f'{label} [{task_date}]: {e}'))
+                    all_results.append({
+                        'account': label, 'date': str(task_date),
+                        'success': False, 'error': str(e), 'records_created': 0,
                     })
 
+                with self._worker_lock:
+                    self._completed_count += 1
+                    pct = self._completed_count * 100 // self._total_tasks
+                    if self._completed_count % 20 == 0 or self._completed_count == self._total_tasks:
+                        elapsed = time.time() - start_time
+                        rate = self._completed_count / elapsed if elapsed > 0 else 0
+                        self.stdout.write(
+                            f'Progress: {self._completed_count}/{self._total_tasks} '
+                            f'({pct}%) - {rate:.1f} tasks/s'
+                        )
+
         duration = time.time() - start_time
-        successful = sum(1 for r in results if r['success'])
-        failed = len(results) - successful
-        total_records = sum(r.get('records_created', 0) for r in results)
+        successful = sum(1 for r in all_results if r.get('success'))
+        failed = len(all_results) - successful
+        total_records = sum(r.get('records_created', 0) for r in all_results)
+
+        failed_details = [r for r in all_results if not r.get('success')]
+        if failed_details:
+            self.stdout.write(self.style.WARNING(f'\n--- Failed tasks ({len(failed_details)}) ---'))
+            for fd in failed_details[:30]:
+                self.stdout.write(self.style.WARNING(
+                    f"  {fd.get('account', '?')} [{fd.get('date', '?')}]: "
+                    f"{fd.get('error', 'unknown')[:120]}"
+                ))
+            if len(failed_details) > 30:
+                self.stdout.write(self.style.WARNING(f'  ... and {len(failed_details) - 30} more'))
+
+        per_date_summary = {}
+        for r in all_results:
+            dt = r.get('date', '?')
+            if dt not in per_date_summary:
+                per_date_summary[dt] = {'ok': 0, 'fail': 0, 'records': 0}
+            if r.get('success'):
+                per_date_summary[dt]['ok'] += 1
+            else:
+                per_date_summary[dt]['fail'] += 1
+            per_date_summary[dt]['records'] += r.get('records_created', 0)
+
+        self.stdout.write(self.style.SUCCESS(f'\n{"=" * 60}'))
+        self.stdout.write(self.style.SUCCESS('PER-DATE SUMMARY'))
+        self.stdout.write(self.style.SUCCESS(f'{"=" * 60}'))
+        for dt in sorted(per_date_summary.keys()):
+            s = per_date_summary[dt]
+            status = 'OK' if s['fail'] == 0 else f'FAIL({s["fail"]})'
+            self.stdout.write(f'  {dt} | OK: {s["ok"]} | Fail: {s["fail"]} | Records: {s["records"]} | {status}')
 
         self.stdout.write(self.style.SUCCESS(
             f'\n{"=" * 60}\n'
-            f'PARALLEL PROCESSING COMPLETE\n'
+            f'COMPLETE\n'
             f'{"=" * 60}\n'
             f'Duration: {duration:.1f}s ({duration / 60:.1f}m)\n'
-            f'Accounts: {self._total_accounts} | OK: {successful} | Fail: {failed}\n'
-            f'Records: {total_records} | Speed: {self._total_accounts / duration:.1f} acct/s\n'
+            f'Days: {len(dates)} | Accounts: {num_accounts}\n'
+            f'Tasks: {self._total_tasks} | OK: {successful} | Fail: {failed}\n'
+            f'Records: {total_records} | Speed: {self._total_tasks / duration:.1f} tasks/s\n'
             f'{"=" * 60}'
         ))
 
@@ -268,7 +314,7 @@ class Command(BaseCommand):
             command = cls()
             command.handle(
                 date_from=None, date_to=None, days_back=1,
-                parallel=True, max_workers=500,
+                parallel=True, max_workers=DEFAULT_MAX_WORKERS,
             )
 
             duration = (timezone.now() - start_time).total_seconds()
