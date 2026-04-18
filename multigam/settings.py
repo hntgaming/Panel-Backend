@@ -368,7 +368,7 @@ GAM_CONFIG = {
     'API_VERSION': config('GAM_API_VERSION', default='v202602'),
     'PRIVATE_KEY_FILE': config('GAM_PRIVATE_KEY_FILE', default='key.json'),
     'SERVICE_ACCOUNT_INFO': GAM_SERVICE_ACCOUNT_INFO,
-    'SCOPES': ['https://www.googleapis.com/auth/dfp'],
+    'SCOPES': ['https://www.googleapis.com/auth/admanager'],
 }
 
 GAM_APPLICATION_NAME = GAM_CONFIG['APPLICATION_NAME']

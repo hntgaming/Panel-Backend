@@ -1204,7 +1204,7 @@ def gam_oauth_init(request):
 
     flow = Flow.from_client_config(
         client_config,
-        scopes=['https://www.googleapis.com/auth/dfp'],
+        scopes=['https://www.googleapis.com/auth/admanager'],
         redirect_uri=redirect_uri,
     )
 
@@ -1248,7 +1248,7 @@ def gam_oauth_callback(request):
     try:
         flow = Flow.from_client_config(
             client_config,
-            scopes=['https://www.googleapis.com/auth/dfp'],
+            scopes=['https://www.googleapis.com/auth/admanager'],
             redirect_uri=redirect_uri,
         )
         flow.fetch_token(code=code)

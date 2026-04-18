@@ -97,7 +97,7 @@ class GAMClientService:
                     pass
             return client
 
-        scopes = ['https://www.googleapis.com/auth/dfp']
+        scopes = ['https://www.googleapis.com/auth/admanager']
         credentials = service_account.Credentials.from_service_account_file(
             key_path, scopes=scopes
         )
