@@ -1246,6 +1246,9 @@ def gam_oauth_callback(request):
     redirect_uri = getattr(settings, 'GAM_OAUTH_REDIRECT_URI', '')
 
     try:
+        import os
+        os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
+
         flow = Flow.from_client_config(
             client_config,
             scopes=['https://www.googleapis.com/auth/admanager'],
