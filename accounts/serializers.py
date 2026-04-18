@@ -350,6 +350,8 @@ class PublisherSiteMiniSerializer(serializers.ModelSerializer):
 class PublisherListSerializer(serializers.ModelSerializer):
     full_name = serializers.CharField(source='get_full_name', read_only=True)
     gam_connected = serializers.SerializerMethodField()
+    gam_network_code = serializers.SerializerMethodField()
+    gam_auth_method = serializers.SerializerMethodField()
     sites = PublisherSiteMiniSerializer(many=True, read_only=True)
 
     def get_gam_connected(self, obj):
@@ -358,9 +360,21 @@ class PublisherListSerializer(serializers.ModelSerializer):
         except Exception:
             return False
 
+    def get_gam_network_code(self, obj):
+        try:
+            return obj.gam_credential.network_code
+        except Exception:
+            return ''
+
+    def get_gam_auth_method(self, obj):
+        try:
+            return obj.gam_credential.get_auth_method_display()
+        except Exception:
+            return ''
+
     class Meta:
         model = User
-        fields = ['id', 'company_name', 'first_name', 'last_name', 'full_name', 'email', 'phone_number', 'status', 'date_joined', 'revenue_share_percentage', 'site_url', 'gam_connected', 'sites']
+        fields = ['id', 'company_name', 'first_name', 'last_name', 'full_name', 'email', 'phone_number', 'status', 'date_joined', 'revenue_share_percentage', 'site_url', 'gam_connected', 'gam_network_code', 'gam_auth_method', 'sites']
 
 
 class SiteSerializer(serializers.ModelSerializer):
