@@ -365,7 +365,7 @@ GAM_SERVICE_ACCOUNT_INFO = {
 
 GAM_CONFIG = {
     'APPLICATION_NAME': config('GAM_APPLICATION_NAME', default='GAM Management Platform'),
-    'API_VERSION': config('GAM_API_VERSION', default='v202408'),
+    'API_VERSION': config('GAM_API_VERSION', default='v202602'),
     'PRIVATE_KEY_FILE': config('GAM_PRIVATE_KEY_FILE', default='key.json'),
     'SERVICE_ACCOUNT_INFO': GAM_SERVICE_ACCOUNT_INFO,
     'SCOPES': ['https://www.googleapis.com/auth/dfp'],
@@ -376,3 +376,7 @@ GAM_API_VERSION = GAM_CONFIG['API_VERSION']
 
 GAM_SERVICE_ACCOUNT_EMAIL = GAM_SERVICE_ACCOUNT_INFO.get('client_email')
 
+# GAM OAuth 2.0 Configuration (for partners who prefer OAuth over service account)
+GAM_OAUTH_CLIENT_ID = config('GAM_OAUTH_CLIENT_ID', default='')
+GAM_OAUTH_CLIENT_SECRET = config('GAM_OAUTH_CLIENT_SECRET', default='')
+GAM_OAUTH_REDIRECT_URI = config('GAM_OAUTH_REDIRECT_URI', default='https://panel.hntgaming.me/gam/oauth/callback')
