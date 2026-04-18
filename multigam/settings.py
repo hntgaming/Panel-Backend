@@ -355,7 +355,7 @@ GAM_SERVICE_ACCOUNT_INFO = {
     'project_id': config('GAM_PROJECT_ID', default='hnt-gaming'),
     'private_key_id': _gam_credentials.get('private_key_id', config('GAM_PRIVATE_KEY_ID', default='')),
     'private_key': _gam_credentials.get('private_key', config('GAM_PRIVATE_KEY', default='')).replace('\\n', '\n'),
-    'client_email': config('GAM_CLIENT_EMAIL', default='ehumps@hnt-gaming.iam.gserviceaccount.com'),
+    'client_email': config('GAM_CLIENT_EMAIL', default='report@hnt-gaming.iam.gserviceaccount.com'),
     'client_id': _gam_credentials.get('client_id', config('GAM_CLIENT_ID', default='')),
     'auth_uri': 'https://accounts.google.com/o/oauth2/auth',
     'token_uri': 'https://oauth2.googleapis.com/token',
@@ -364,8 +364,8 @@ GAM_SERVICE_ACCOUNT_INFO = {
 }
 
 GAM_CONFIG = {
-    'APPLICATION_NAME': config('GAM_APPLICATION_NAME', default='Managed Inventory Publisher Dashboard'),
-    'API_VERSION': config('GAM_API_VERSION', default='v202508'),
+    'APPLICATION_NAME': config('GAM_APPLICATION_NAME', default='GAM Management Platform'),
+    'API_VERSION': config('GAM_API_VERSION', default='v202408'),
     'PRIVATE_KEY_FILE': config('GAM_PRIVATE_KEY_FILE', default='key.json'),
     'SERVICE_ACCOUNT_INFO': GAM_SERVICE_ACCOUNT_INFO,
     'SCOPES': ['https://www.googleapis.com/auth/dfp'],
@@ -374,11 +374,5 @@ GAM_CONFIG = {
 GAM_APPLICATION_NAME = GAM_CONFIG['APPLICATION_NAME']
 GAM_API_VERSION = GAM_CONFIG['API_VERSION']
 
-# CRITICAL: Add this missing field that your service account needs
 GAM_SERVICE_ACCOUNT_EMAIL = GAM_SERVICE_ACCOUNT_INFO.get('client_email')
-
-# Print GAM configuration in development
-# GAM configuration loaded - validation happens in services
-
-# CORS configuration is complete - no debug output needed
 
