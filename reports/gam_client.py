@@ -5,7 +5,6 @@ import tempfile
 import threading
 import yaml
 from googleads import ad_manager
-from google.oauth2 import service_account
 from django.conf import settings
 import logging
 
@@ -97,9 +96,10 @@ class GAMClientService:
                     pass
             return client
 
-        scopes = ['https://www.googleapis.com/auth/admanager']
-        credentials = service_account.Credentials.from_service_account_file(
-            key_path, scopes=scopes
+        from googleads import oauth2 as googleads_oauth2
+        scope = 'https://www.googleapis.com/auth/admanager'
+        credentials = googleads_oauth2.GoogleServiceAccountClient(
+            key_file=key_path, scope=scope
         )
         app_name = getattr(settings, 'GAM_CONFIG', {}).get('APPLICATION_NAME', 'H&T Gaming')
         client = ad_manager.AdManagerClient(
@@ -110,17 +110,15 @@ class GAMClientService:
     @staticmethod
     def _build_oauth_client(cred):
         """Build an AdManagerClient using OAuth 2.0 refresh token credentials."""
-        from google.oauth2.credentials import Credentials as OAuthCredentials
+        from googleads import oauth2 as googleads_oauth2
 
-        oauth_creds = OAuthCredentials(
-            token=None,
-            refresh_token=cred.oauth_refresh_token,
+        oauth_creds = googleads_oauth2.GoogleRefreshTokenClient(
             client_id=cred.oauth_client_id,
             client_secret=getattr(settings, 'GAM_OAUTH_CLIENT_SECRET', ''),
-            token_uri='https://oauth2.googleapis.com/token',
+            refresh_token=cred.oauth_refresh_token,
         )
 
-        application_name = getattr(settings, 'GAM_APPLICATION_NAME', settings.GAM_CONFIG['APPLICATION_NAME'])
+        application_name = getattr(settings, 'GAM_CONFIG', {}).get('APPLICATION_NAME', 'H&T Gaming')
 
         client = ad_manager.AdManagerClient(
             oauth_creds,
@@ -135,7 +133,7 @@ class GAMClientService:
         try:
             GAMClientService.clear_partner_cache(partner_admin.id)
             client = GAMClientService.get_client_for_partner(partner_admin)
-            network_service = client.GetService("NetworkService", version="v202508")
+            network_service = client.GetService("NetworkService", version="v202602")
             current_network = network_service.getCurrentNetwork()
 
             return {
@@ -177,10 +175,10 @@ class GAMClientService:
             client = GAMClientService.get_client_for_partner(partner_admin)
             
             # Use SiteService to get sites
-            site_service = client.GetService("SiteService", version="v202511")
+            site_service = client.GetService("SiteService", version="v202602")
             
             # Build statement
-            statement = ad_manager.StatementBuilder(version="v202511")
+            statement = ad_manager.StatementBuilder(version="v202602")
             
             if site_id:
                 statement.Where("id = :site_id").WithBindVariable("site_id", int(site_id))
@@ -246,7 +244,7 @@ class GAMClientService:
                         if alt_domain == normalized_domain:  # Skip if already tried
                             continue
                         try:
-                            alt_statement = ad_manager.StatementBuilder(version="v202511")
+                            alt_statement = ad_manager.StatementBuilder(version="v202602")
                             alt_statement.Where("url = :url").WithBindVariable("url", alt_domain)
                             alt_page = site_service.getSitesByStatement(alt_statement.ToStatement())
                             

@@ -10,7 +10,7 @@ pytest==7.4.3
 pytest-django==4.6.0
 google-ads==25.2.0
 google-ads-admanager==0.2.5
-googleads==41.0.0
+googleads==49.0.0
 google-auth==2.40.3
 google-auth-oauthlib==1.2.2
 google-auth-httplib2==0.2.0
