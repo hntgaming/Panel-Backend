@@ -150,10 +150,8 @@ def user_login_view(request):
         import traceback
         error_trace = traceback.format_exc()
         logger.error(f"Login view error: {str(e)}\n{error_trace}")
-        # Always return error detail in production for debugging
         return Response({
-            'error': 'An error occurred during login. Please try again.',
-            'detail': str(e)
+            'error': 'An error occurred during login. Please try again.'
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
