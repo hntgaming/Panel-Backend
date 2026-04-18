@@ -1,7 +1,7 @@
 # Essential packages
 Django==4.2.7
 djangorestframework==3.14.0
-djangorestframework-simplejwt==5.3.0
+djangorestframework-simplejwt==5.5.1
 django-cors-headers==4.4.0
 python-decouple==3.8
 psycopg2-binary==2.9.9
