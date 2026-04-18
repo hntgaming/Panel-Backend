@@ -131,6 +131,31 @@ def require_permission(permission_type):
     return decorator
 
 
+class IsPartnerAdminOrAdmin(permissions.BasePermission):
+    """Allow access to partner_admin and admin roles only."""
+
+    def has_permission(self, request, view):
+        if not request.user or not request.user.is_authenticated:
+            return False
+        return request.user.role in ('admin', 'partner_admin')
+
+
+class IsSubPublisherOwnerOrAdmin(permissions.BasePermission):
+    """
+    Object-level: allow if the requesting user is the sub-publisher's
+    parent_publisher, or an admin.
+    """
+
+    def has_object_permission(self, request, view, obj):
+        if request.user.role == 'admin':
+            return True
+        if request.user.role == 'partner_admin':
+            return getattr(obj, 'parent_publisher_id', None) == request.user.id
+        if request.user.role == 'sub_publisher':
+            return obj.id == request.user.id
+        return False
+
+
 class HasPublisherPermission(permissions.BasePermission):
     """
     Custom permission class for DRF views
@@ -159,102 +184,4 @@ class HasPublisherPermission(permissions.BasePermission):
         return has_publisher_permission(request.user, required_permission)
 
 
-class PublisherQuerysetMixin:
-    """
-    Mixin to filter querysets based on publisher assignments
-    Automatically limits publishers to their assigned child accounts
-    """
-    
-    def get_queryset(self):
-        """Override to filter by publisher assignments"""
-        # Try to get queryset from parent class
-        try:
-            queryset = super().get_queryset()
-        except (AttributeError, AssertionError):
-            # If parent doesn't have queryset, build it from scratch
-            # This handles views that don't define a queryset attribute
-            # Simplified for managed inventory - no MCM invitations
-            queryset = []
-        
-        # Admin users see everything
-        if self.request.user.is_staff or self.request.user.is_superuser or self.request.user.role.upper() == 'ADMIN':
-            return queryset
-        
-        # Publisher users only see assigned accounts
-        if self.request.user.role.upper() == 'PUBLISHER':
-            # Simplified for managed inventory - no assigned accounts
-            # Get assigned invitation IDs
-            # Simplified for managed inventory - no assigned accounts
-            assigned_ids = []
-            
-            # Filter queryset by assigned invitations
-            # This works for models that have 'invitation' FK
-            if hasattr(queryset.model, 'invitation'):
-                queryset = queryset.filter(invitation_id__in=list(assigned_ids))
-            # For models with 'child_network_code'
-            elif hasattr(queryset.model, 'child_network_code'):
-                # Simplified for managed inventory - no assigned accounts
-                assigned_codes = []
-                queryset = queryset.filter(child_network_code__in=list(assigned_codes))
-            # MCMInvitation model removed - using User model with network_id instead
-            # No additional filtering needed for managed inventory
-        
-        return queryset
-
-
-def get_assigned_child_network_codes(user):
-    """
-    Get list of child network codes assigned to a publisher
-    
-    Args:
-        user: User object
-    
-    Returns:
-        list: List of child network codes
-    """
-    if not user or not user.is_authenticated:
-        return []
-    
-    # Admin users have access to all
-    if user.is_staff or user.is_superuser or user.role.upper() == 'ADMIN':
-        return None  # None means "all"
-    
-    # Simplified for managed inventory - no assigned accounts
-    # Get assigned invitation IDs
-    # Simplified for managed inventory - no assigned accounts
-    assigned_ids = []
-    
-    # Simplified for managed inventory - no assigned accounts
-    network_codes = []
-    
-    return list(network_codes)
-
-
-
-
-def get_parent_network_for_user(user):
-    """
-    Get the parent GAM network for a parent user
-    
-    Args:
-        user: User object
-    
-    Returns:
-        GAMNetwork object or None
-    """
-    if not user or not user.is_authenticated:
-        return None
-    
-    if user.role != 'parent':
-        return None
-    
-    # Get parent network from PublisherPermission
-    from .models import PublisherPermission
-    
-    perm = PublisherPermission.objects.filter(
-        user=user,
-        parent_gam_network__isnull=False
-    ).select_related('parent_gam_network').first()
-    
-    return perm.parent_gam_network if perm else None
 

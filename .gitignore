@@ -9,11 +9,14 @@ db.sqlite3-journal
 *.db
 media/
 
-# Environment variables
-
+# Service account keys — NEVER commit
+*.json
+!package.json
+yaml_files/
 
 # Virtual environment
 venv/
+.venv/
 
 # IDE
 .vscode/

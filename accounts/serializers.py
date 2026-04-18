@@ -8,7 +8,7 @@ from django.core.validators import RegexValidator
 import logging
 
 from core.models import StatusChoices
-from .models import User, PublisherPermission
+from .models import User, PublisherPermission, TrackingAssignment, Subdomain, Tutorial, GAMCredential
 from .services import send_welcome_email_with_reset_link
 
 logger = logging.getLogger(__name__)
@@ -43,7 +43,7 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
     permissions = serializers.ListField(
         child=serializers.DictField(),
         required=False,
-        help_text="List of permission dicts. Use 'parent_gam_network' for manage_mcm_invites."
+        help_text="List of permission dicts."
     )
 
     class Meta:
@@ -61,8 +61,6 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
             'permissions',
             'revenue_share_percentage',
             'site_url',
-            'network_id',
-            'gam_type',
             'email_notifications',
             'slack_notifications',
             'slack_webhook_url'
@@ -72,7 +70,7 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
             'first_name': {'required': True},
             'last_name': {'required': True},
             'company_name': {'required': False, 'allow_blank': True},
-            'role': {'default': User.UserRole.PUBLISHER}
+            'role': {'default': User.UserRole.PARTNER_ADMIN}
         }
 
     def validate_email(self, value):
@@ -132,9 +130,6 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
             if item['permission'] not in valid_permissions:
                 raise serializers.ValidationError(f"Invalid permission: {item['permission']}")
 
-            if item['permission'] == 'mcm_invites' and 'parent_gam_network' not in item:
-                raise serializers.ValidationError("parent_gam_network is required for mcm_invites.")
-
         return value
 
     def validate(self, attrs):
@@ -142,17 +137,6 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({
                 'password_confirm': "Password confirmation doesn't match password."
             })
-        
-        gam_type = attrs.get('gam_type', 'mcm')
-        if gam_type == 'mcm' and not attrs.get('network_id'):
-            raise serializers.ValidationError({
-                'network_id': "Network ID is required for MCM publishers."
-            })
-        if gam_type == 'o_and_o' and not attrs.get('site_url'):
-            raise serializers.ValidationError({
-                'site_url': "Site URL is required for O&O publishers."
-            })
-        
         return attrs
 
     def create(self, validated_data):
@@ -164,8 +148,8 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
 
         user = User.objects.create_user(**validated_data)
 
-        # Publishers are active by default
-        if user.role == User.UserRole.PUBLISHER:
+        # Partner admins are active by default
+        if user.role == User.UserRole.PARTNER_ADMIN:
             user.status = StatusChoices.ACTIVE
             user.save(update_fields=['status'])
 
@@ -365,15 +349,18 @@ class PublisherSiteMiniSerializer(serializers.ModelSerializer):
 
 class PublisherListSerializer(serializers.ModelSerializer):
     full_name = serializers.CharField(source='get_full_name', read_only=True)
-    gam_type_display = serializers.SerializerMethodField()
+    gam_connected = serializers.SerializerMethodField()
     sites = PublisherSiteMiniSerializer(many=True, read_only=True)
-    
-    def get_gam_type_display(self, obj):
-        return obj.get_gam_type_display() if hasattr(obj, 'get_gam_type_display') else obj.gam_type
-    
+
+    def get_gam_connected(self, obj):
+        try:
+            return obj.gam_credential.is_connected
+        except Exception:
+            return False
+
     class Meta:
         model = User
-        fields = ['id', 'company_name', 'first_name', 'last_name', 'full_name', 'email', 'phone_number', 'status', 'date_joined', 'revenue_share_percentage', 'site_url', 'network_id', 'gam_type', 'gam_type_display', 'sites']
+        fields = ['id', 'company_name', 'first_name', 'last_name', 'full_name', 'email', 'phone_number', 'status', 'date_joined', 'revenue_share_percentage', 'site_url', 'gam_connected', 'sites']
 
 
 class SiteSerializer(serializers.ModelSerializer):
@@ -463,201 +450,197 @@ class PaymentDetailListSerializer(serializers.ModelSerializer):
         ]
 
 
-class PublicSignupSerializer(serializers.Serializer):
-    """
-    Public signup serializer for new publishers
-    Fields: name, phone (WhatsApp), email, site_link
-    Automatically sends MCM invitation via GAM API
-    """
-    name = serializers.CharField(
-        max_length=100,
-        help_text="Full name of the publisher"
+# ---------------------------------------------------------------------------
+# Sub-Publisher Serializers
+# ---------------------------------------------------------------------------
+
+class SubPublisherListSerializer(serializers.ModelSerializer):
+    full_name = serializers.CharField(source='get_full_name', read_only=True)
+    tracking_info = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = [
+            'id', 'email', 'username', 'first_name', 'last_name', 'full_name',
+            'phone_number', 'company_name', 'status',
+            'custom_fee_percentage', 'date_joined', 'tracking_info',
+        ]
+
+    def get_tracking_info(self, obj):
+        try:
+            ta = obj.tracking_assignment
+            return {
+                'subdomain': ta.subdomain,
+                'is_active': ta.is_active,
+            }
+        except TrackingAssignment.DoesNotExist:
+            return None
+
+
+class SubPublisherCreateSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    first_name = serializers.CharField(max_length=30)
+    last_name = serializers.CharField(max_length=30, required=False, allow_blank=True)
+    phone_number = serializers.CharField(max_length=20, required=False, allow_blank=True)
+    company_name = serializers.CharField(max_length=100, required=False, allow_blank=True)
+    subdomain = serializers.CharField(max_length=255)
+    custom_fee_percentage = serializers.DecimalField(
+        max_digits=5, decimal_places=2, default=0, min_value=0, max_value=100,
     )
-    phone = serializers.CharField(
-        max_length=20,
-        validators=[
-            RegexValidator(
-                regex=r'^\+?1?\d{9,15}$',
-                message="Phone number must be in format: '+999999999'. Up to 15 digits allowed."
-            )
-        ],
-        help_text="WhatsApp phone number"
-    )
-    email = serializers.EmailField(
-        help_text="Email address (must not have existing AdSense/AdManager account)"
-    )
-    site_link = serializers.URLField(
-        help_text="Website URL"
-    )
-    network_id = serializers.CharField(
-        max_length=50,
-        required=False,
-        allow_blank=True,
-        help_text="GAM Network ID (optional). If provided, MCM invitation will be sent to this existing network."
-    )
-    
-    def validate_network_id(self, value):
-        """Validate network ID format"""
-        if not value or not value.strip():
-            return None  # Allow empty/blank values
-        value = value.strip()
-        # Network ID should be numeric
-        if not value.isdigit():
-            raise serializers.ValidationError(
-                "Network ID must be numeric."
-            )
-        return value
-    
+
     def validate_email(self, value):
-        """Check if email already exists"""
+        value = value.lower()
         if User.objects.filter(email__iexact=value).exists():
-            raise serializers.ValidationError(
-                "A user with this email address already exists. Please use a different email or login."
-            )
-        return value.lower()
-    
-    def validate_site_link(self, value):
-        """Validate and normalize site link"""
-        # Ensure URL has protocol
-        value = value.strip()
-        if not value.startswith('http://') and not value.startswith('https://'):
-            value = f'https://{value}'
-        # Remove trailing slash for consistency
-        if value.endswith('/'):
-            value = value[:-1]
+            raise serializers.ValidationError("A user with this email already exists.")
         return value
-    
+
+    def validate_subdomain(self, value):
+        value = value.strip().lower()
+        if not value:
+            raise serializers.ValidationError("Subdomain is required.")
+        return value
+
     def create(self, validated_data):
-        """Create user and send MCM invitation"""
-        from reports.gam_client import GAMClientService
-        from core.models import StatusChoices
-        
-        # Extract data
-        name = validated_data['name']
-        phone = validated_data['phone']
+        partner = self.context['request'].user
         email = validated_data['email']
-        site_link = validated_data['site_link']
-        network_id = validated_data.get('network_id', '').strip() if validated_data.get('network_id') else None
-        
-        # Parse name into first_name and last_name
-        name_parts = name.strip().split(maxsplit=1)
-        first_name = name_parts[0] if name_parts else name
-        last_name = name_parts[1] if len(name_parts) > 1 else ""
-        
-        # Generate username from email
         username = email.split('@')[0]
-        # Ensure username is unique
         base_username = username
         counter = 1
         while User.objects.filter(username=username).exists():
             username = f"{base_username}{counter}"
             counter += 1
-        
-        # Create user with temporary password (will be set via welcome email)
+
         import secrets
         temp_password = secrets.token_urlsafe(16)
-        
-        # Create user with network_id (if provided)
-        user_kwargs = {
-            'username': username,
-            'email': email,
-            'first_name': first_name,
-            'last_name': last_name,
-            'phone_number': phone,
-            'site_url': validated_data['site_link'],  # Store original URL with https
-            'role': User.UserRole.PUBLISHER,
-            'status': StatusChoices.PENDING_APPROVAL,  # Will be activated after password reset
-            'password': temp_password,
-            'revenue_share_percentage': 20.00,  # 80% to publisher, 20% to parent
-        }
-        
-        # Only add network_id if provided
-        if network_id:
-            user_kwargs['network_id'] = network_id
-        
-        user = User.objects.create_user(**user_kwargs)
-        
-        # Create child network name: site link without https + "PubDash" (for GAM)
-        # Remove https:// or http://
-        site_name = validated_data['site_link']
-        if site_name.startswith('https://'):
-            site_name = site_name[8:]
-        elif site_name.startswith('http://'):
-            site_name = site_name[7:]
-        # Remove trailing slash
-        if site_name.endswith('/'):
-            site_name = site_name[:-1]
-        # Remove www. if present
-        if site_name.startswith('www.'):
-            site_name = site_name[4:]
-        
-        child_network_name = f"{site_name} - PubDash"
-        
-        # Send MCM invitation via GAM API
-        # Use network_id as child_network_code if provided (existing network), otherwise None (new network)
-        mcm_result = GAMClientService.send_mcm_invitation(
-            email=email,
-            child_network_name=child_network_name,
-            child_network_code=network_id,  # None for new network, network_id for existing
-            revenue_share_percentage=None,  # Not required for managed inventory
-            delegation_type='MANAGE_INVENTORY'
-        )
-        
-        if not mcm_result.get('success'):
-            # If MCM invitation fails, still create user but log the error
-            # User can be manually set up later
-            logger.warning(f"⚠️ User created but MCM invitation failed: {mcm_result.get('error')}")
-            # Don't raise exception - allow user creation to proceed
-            # Admin can manually send invitation later
-        
-        # Add site to parent GAM network
-        # Extract domain from site_link for site name
-        site_name = validated_data['site_link']
-        if site_name.startswith('https://'):
-            site_name = site_name[8:]
-        elif site_name.startswith('http://'):
-            site_name = site_name[7:]
-        if site_name.endswith('/'):
-            site_name = site_name[:-1]
-        if site_name.startswith('www.'):
-            site_name = site_name[4:]
-        
-        site_result = GAMClientService.add_site_to_parent_network(
-            site_url=validated_data['site_link'],
-            site_name=site_name,
-            child_network_code=network_id if network_id else None
-        )
-        
-        if not site_result.get('success'):
-            # If site addition fails, log but don't fail user creation
-            logger.warning(f"Site could not be added to GAM: {site_result.get('error')}")
-        else:
-            logger.debug(f"Site added to parent GAM network: {site_result.get('site_url')}")
-        
-        # Send welcome email with password reset link
-        send_welcome_email_with_reset_link(user)
-        
-        # Assign default permissions (reports and settings)
-        PublisherPermission.objects.create(user=user, permission='reports')
-        PublisherPermission.objects.create(user=user, permission='settings')
-        
-        # Create Site record
-        from .models import Site
-        gam_type = user.gam_type or 'mcm'
-        if gam_type == 'o_and_o':
-            initial_gam_status = Site.GamStatus.READY
-        elif site_result.get('success'):
-            initial_gam_status = Site.GamStatus.GETTING_READY
-        else:
-            initial_gam_status = Site.GamStatus.NEEDS_ATTENTION
 
-        site = Site.objects.create(
-            publisher=user,
-            url=validated_data['site_link'],
-            gam_status=initial_gam_status,
-            gam_site_id=site_result.get('site_id') if site_result.get('success') else None,
-            ads_txt_status=Site.AdsTxtStatus.MISSING
+        sub_pub = User.objects.create_user(
+            username=username,
+            email=email,
+            first_name=validated_data['first_name'],
+            last_name=validated_data.get('last_name', ''),
+            phone_number=validated_data.get('phone_number', ''),
+            company_name=validated_data.get('company_name', ''),
+            role=User.UserRole.SUB_PUBLISHER,
+            parent_publisher=partner,
+            custom_fee_percentage=validated_data.get('custom_fee_percentage', 0),
+            status=StatusChoices.ACTIVE,
+            password=temp_password,
         )
-        
-        return user
+
+        TrackingAssignment.objects.create(
+            sub_publisher=sub_pub,
+            partner_admin=partner,
+            subdomain=validated_data['subdomain'],
+        )
+
+        try:
+            send_welcome_email_with_reset_link(sub_pub)
+        except Exception as e:
+            logger.error(f"Welcome email failed for sub-publisher {sub_pub.email}: {e}")
+
+        return sub_pub
+
+
+class SubPublisherUpdateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = [
+            'first_name', 'last_name', 'phone_number', 'company_name',
+            'custom_fee_percentage', 'status',
+        ]
+
+    def validate_custom_fee_percentage(self, value):
+        if value < 0 or value > 100:
+            raise serializers.ValidationError("Fee must be between 0 and 100.")
+        return value
+
+
+class TrackingAssignmentSerializer(serializers.ModelSerializer):
+    sub_publisher_email = serializers.EmailField(source='sub_publisher.email', read_only=True)
+
+    class Meta:
+        model = TrackingAssignment
+        fields = [
+            'id', 'sub_publisher', 'sub_publisher_email', 'partner_admin',
+            'subdomain', 'is_active', 'notes',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'sub_publisher', 'partner_admin', 'created_at', 'updated_at']
+
+
+class TrackingAssignmentCreateSerializer(serializers.Serializer):
+    subdomain = serializers.CharField(max_length=255)
+    notes = serializers.CharField(required=False, allow_blank=True, default='')
+
+    def validate_subdomain(self, value):
+        value = value.strip().lower()
+        if not value:
+            raise serializers.ValidationError("Subdomain is required.")
+        return value
+
+
+class GAMCredentialSerializer(serializers.ModelSerializer):
+    service_account_email = serializers.CharField(read_only=True)
+
+    class Meta:
+        model = GAMCredential
+        fields = [
+            'id', 'auth_method', 'network_code', 'is_connected',
+            'last_synced_at', 'connection_error', 'service_account_email',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = [
+            'id', 'is_connected', 'last_synced_at', 'connection_error',
+            'service_account_email', 'created_at', 'updated_at',
+        ]
+
+
+class GAMConnectSerializer(serializers.Serializer):
+    network_code = serializers.CharField(max_length=50)
+    auth_method = serializers.ChoiceField(
+        choices=GAMCredential.AuthMethod.choices,
+        default=GAMCredential.AuthMethod.SERVICE_ACCOUNT,
+    )
+
+    def validate_network_code(self, value):
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError("Network code is required.")
+        if not value.isdigit():
+            raise serializers.ValidationError("Network code must be numeric.")
+        return value
+
+
+class SubdomainSerializer(serializers.ModelSerializer):
+    full_domain = serializers.CharField(read_only=True)
+    assigned_to_email = serializers.EmailField(source='assigned_to.email', read_only=True, default=None)
+
+    class Meta:
+        model = Subdomain
+        fields = [
+            'id', 'partner_admin', 'subdomain', 'base_domain', 'full_domain',
+            'assigned_to', 'assigned_to_email', 'is_active', 'dns_verified',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'partner_admin', 'full_domain', 'created_at', 'updated_at']
+
+
+class TutorialSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Tutorial
+        fields = [
+            'id', 'title', 'slug', 'category', 'content', 'summary',
+            'order', 'is_published', 'target_roles', 'video_url',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+class TutorialListSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Tutorial
+        fields = [
+            'id', 'title', 'slug', 'category', 'summary', 'order',
+            'is_published', 'target_roles', 'video_url',
+        ]
 

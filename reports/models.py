@@ -2,9 +2,7 @@
 
 from django.db import models
 from django.utils import timezone
-from django.utils.functional import cached_property
 from django.conf import settings
-from accounts.models import User
 
 DIMENSION_CHOICES = [
     ('overview', 'Overview'),
@@ -17,263 +15,21 @@ DIMENSION_CHOICES = [
     ('browser', 'Browser'),
 ]
 
-SOURCE_TYPE_CHOICES = [
-    ('mcm_direct', 'MCM Direct'),
-    ('gam360_passback', 'GAM 360 Passback'),
-    ('prebid', 'Prebid'),
-    ('open_bidding', 'Open Bidding'),
-    ('adx_direct', 'AdX Direct'),
-    ('house', 'House'),
-    ('direct_campaign', 'Direct Campaign'),
-    ('unknown', 'Unknown'),
-]
-
-PLATFORM_CHOICES = [
-    ('web', 'Web'),
-    ('app', 'App'),
-    ('amp', 'AMP'),
-    ('ctv', 'CTV'),
-]
-
-
-class Property(models.Model):
-    """
-    Internal property entity. Maps 1:1 to a domain or app bundle owned by a publisher.
-    This is the canonical identity for attribution — not the GAM site dimension.
-    """
-    publisher = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name='properties',
-        limit_choices_to={'role': 'publisher'},
-    )
-    property_id = models.CharField(
-        max_length=100,
-        unique=True,
-        db_index=True,
-        help_text="Internal property ID, e.g. prop_42_example_com",
-    )
-    domain = models.CharField(
-        max_length=255,
-        blank=True,
-        db_index=True,
-        help_text="Primary domain for web properties",
-    )
-    app_bundle = models.CharField(
-        max_length=255,
-        blank=True,
-        help_text="App bundle ID for mobile properties",
-    )
-    platform = models.CharField(
-        max_length=10,
-        choices=PLATFORM_CHOICES,
-        default='web',
-    )
-    status = models.CharField(
-        max_length=20,
-        choices=[('active', 'Active'), ('inactive', 'Inactive'), ('pending', 'Pending')],
-        default='active',
-    )
-    notes = models.TextField(blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        db_table = 'tracking_properties'
-        verbose_name_plural = 'Properties'
-        indexes = [
-            models.Index(fields=['publisher', 'status']),
-            models.Index(fields=['domain']),
-        ]
-
-    def __str__(self):
-        return f"{self.property_id} ({self.domain or self.app_bundle})"
-
-    def save(self, *args, **kwargs):
-        if not self.property_id:
-            slug = (self.domain or self.app_bundle or 'unknown').replace('.', '_').replace('/', '_')
-            self.property_id = f"prop_{self.publisher_id}_{slug}"
-        super().save(*args, **kwargs)
-
-
-class Placement(models.Model):
-    """
-    A specific ad slot on a property. Each placement maps to a GAM ad unit
-    and carries a size, device target, and unique ID for attribution.
-    """
-    property = models.ForeignKey(
-        Property,
-        on_delete=models.CASCADE,
-        related_name='placements',
-    )
-    placement_id = models.CharField(
-        max_length=150,
-        unique=True,
-        db_index=True,
-        help_text="Internal placement ID, e.g. plc_42_example_com_article_top_300x250",
-    )
-    placement_name = models.CharField(
-        max_length=150,
-        help_text="Human-readable name, e.g. Article Top 300x250",
-    )
-    ad_size = models.CharField(
-        max_length=50,
-        blank=True,
-        help_text="Ad size, e.g. 300x250, 728x90, responsive",
-    )
-    device_type = models.CharField(
-        max_length=20,
-        choices=[('all', 'All'), ('desktop', 'Desktop'), ('mobile', 'Mobile'), ('tablet', 'Tablet')],
-        default='all',
-    )
-    status = models.CharField(
-        max_length=20,
-        choices=[('active', 'Active'), ('inactive', 'Inactive'), ('pending', 'Pending')],
-        default='active',
-    )
-    notes = models.TextField(blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        db_table = 'tracking_placements'
-        indexes = [
-            models.Index(fields=['property', 'status']),
-        ]
-
-    def __str__(self):
-        return f"{self.placement_id} ({self.placement_name})"
-
-    @cached_property
-    def publisher(self):
-        return self.property.publisher
-
-    def save(self, *args, **kwargs):
-        if not self.placement_id:
-            prop_slug = self.property.property_id.replace('prop_', '')
-            name_slug = self.placement_name.lower().replace(' ', '_').replace('-', '_')
-            size_slug = self.ad_size.replace('x', 'x') if self.ad_size else ''
-            self.placement_id = f"plc_{prop_slug}_{name_slug}_{size_slug}".rstrip('_')
-        super().save(*args, **kwargs)
-
-
-class GAMMapping(models.Model):
-    """
-    Maps GAM entities (ad units, line items, orders) to our internal
-    publisher/property/placement identities. This is the bridge between
-    GAM report data and our attribution system.
-    """
-    publisher = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name='gam_mappings',
-        null=True, blank=True,
-    )
-    property = models.ForeignKey(
-        Property,
-        on_delete=models.SET_NULL,
-        null=True, blank=True,
-        related_name='gam_mappings',
-    )
-    placement = models.ForeignKey(
-        Placement,
-        on_delete=models.SET_NULL,
-        null=True, blank=True,
-        related_name='gam_mappings',
-    )
-    gam_network_code = models.CharField(max_length=50, db_index=True)
-    gam_ad_unit_path = models.CharField(
-        max_length=500,
-        blank=True,
-        db_index=True,
-        help_text="Full ad unit path, e.g. /23341212234/hnt/pub_42/prop_42_example_com/article_top_300x250",
-    )
-    gam_ad_unit_id = models.CharField(max_length=50, blank=True)
-    gam_line_item_id = models.CharField(max_length=50, blank=True)
-    gam_order_id = models.CharField(max_length=50, blank=True)
-    source_type = models.CharField(
-        max_length=30,
-        choices=SOURCE_TYPE_CHOICES,
-        default='unknown',
-    )
-    is_active = models.BooleanField(default=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        db_table = 'tracking_gam_mappings'
-        indexes = [
-            models.Index(fields=['gam_ad_unit_path']),
-            models.Index(fields=['gam_ad_unit_id']),
-            models.Index(fields=['gam_line_item_id']),
-            models.Index(fields=['gam_network_code', 'gam_ad_unit_path']),
-            models.Index(fields=['source_type']),
-        ]
-
-    def __str__(self):
-        return f"{self.gam_ad_unit_path or self.gam_ad_unit_id} -> {self.placement or self.property or self.publisher}"
-
-
-class SourceTypeRule(models.Model):
-    """
-    Rules for classifying demand source type based on GAM line item / order
-    naming conventions or IDs. Evaluated in priority order.
-    """
-    MATCH_FIELD_CHOICES = [
-        ('line_item_name', 'Line Item Name'),
-        ('line_item_id', 'Line Item ID'),
-        ('order_name', 'Order Name'),
-        ('order_id', 'Order ID'),
-        ('ad_unit_path', 'Ad Unit Path'),
-        ('creative_name', 'Creative Name'),
-    ]
-    MATCH_TYPE_CHOICES = [
-        ('contains', 'Contains'),
-        ('startswith', 'Starts With'),
-        ('exact', 'Exact Match'),
-        ('regex', 'Regex'),
-    ]
-
-    priority = models.IntegerField(default=100, help_text="Lower = higher priority")
-    match_field = models.CharField(max_length=30, choices=MATCH_FIELD_CHOICES)
-    match_type = models.CharField(max_length=20, choices=MATCH_TYPE_CHOICES, default='contains')
-    match_value = models.CharField(max_length=500)
-    source_type = models.CharField(max_length=30, choices=SOURCE_TYPE_CHOICES)
-    is_active = models.BooleanField(default=True)
-    notes = models.TextField(blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        db_table = 'tracking_source_type_rules'
-        ordering = ['priority']
-
-    def __str__(self):
-        return f"[{self.priority}] {self.match_field} {self.match_type} '{self.match_value}' -> {self.source_type}"
-
 class MasterMetaData(models.Model):
     """
-    Unified reporting table for GAM analytics
-    Optimized with proper indexing and validation
+    Unified reporting table for GAM analytics.
+    Each partner admin connects their own GAM account; reports are fetched directly.
     """
-    # Source relationships - simplified for managed inventory
-    parent_network_code = models.CharField(
-        max_length=20,
-        default='152344380',
-        help_text="Parent GAM network code",
-        db_index=True
-    )
-
-    # Denormalized fields for fast filtering
-    child_network_code = models.CharField(
+    network_code = models.CharField(
         max_length=100,
         db_index=True,
-        help_text="Child network code or O&O domain for direct filtering"
+        help_text="Partner's GAM network code (from GAMCredential)"
     )
     publisher_id = models.IntegerField(
         null=True,
         blank=True,
         db_index=True,
-        help_text="Publisher assigned to this child network"
+        help_text="Partner admin user ID who owns this GAM account"
     )
 
     # Dimension + Date for flexible reporting
@@ -352,16 +108,14 @@ class MasterMetaData(models.Model):
 
     class Meta:
         db_table = "master_metadata"
-        unique_together = ("child_network_code", "date", "dimension_type", "dimension_value")
+        unique_together = ("network_code", "date", "dimension_type", "dimension_value")
         indexes = [
             models.Index(fields=["date"]),
             models.Index(fields=["dimension_type", "dimension_value"]),
-            models.Index(fields=["parent_network_code"]),
-            models.Index(fields=["child_network_code"]),
+            models.Index(fields=["network_code"]),
             models.Index(fields=["publisher_id"]),
             models.Index(fields=["date", "dimension_type", "publisher_id"]),
-            models.Index(fields=["parent_network_code", "date"]),
-            models.Index(fields=["child_network_code", "date"]),
+            models.Index(fields=["network_code", "date"]),
         ]
         ordering = ['-date', 'dimension_type']
 
@@ -392,7 +146,7 @@ class MasterMetaData(models.Model):
         super().save(*args, **kwargs)
 
     def __str__(self):
-        return f"{self.date} | {self.child_network_code} | {self.dimension_type} | {self.dimension_value or 'overview'}"
+        return f"{self.date} | {self.network_code} | {self.dimension_type} | {self.dimension_value or 'overview'}"
 
     @property
     def fill_rate(self):
@@ -538,3 +292,82 @@ class MonthlyEarning(models.Model):
     def recalculate_net(self):
         self.net_earnings = self.gross_revenue - self.ivt_deduction - self.parent_share
         return self.net_earnings
+
+
+class SubPublisherEarning(models.Model):
+    """
+    Earnings record per sub-publisher per date.
+    Derived from MasterMetaData by matching subdomain tracking assignments
+    against GAM report site dimension values. Fee is snapshotted at calculation
+    time for audit trail integrity.
+    """
+
+    sub_publisher = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='sub_publisher_earnings',
+        limit_choices_to={'role': 'sub_publisher'},
+    )
+    partner_admin = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='managed_sub_publisher_earnings',
+        limit_choices_to={'role__in': ['partner_admin', 'admin']},
+    )
+    tracking_assignment = models.ForeignKey(
+        'accounts.TrackingAssignment',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='earnings',
+    )
+
+    date = models.DateField(db_index=True)
+
+    gross_revenue = models.DecimalField(max_digits=20, decimal_places=6, default=0)
+    fee_percentage = models.DecimalField(
+        max_digits=5, decimal_places=2, default=0,
+        help_text="Fee percentage snapshot at calculation time"
+    )
+    fee_amount = models.DecimalField(max_digits=20, decimal_places=6, default=0)
+    net_revenue = models.DecimalField(max_digits=20, decimal_places=6, default=0)
+
+    impressions = models.BigIntegerField(default=0)
+    clicks = models.BigIntegerField(default=0)
+    ecpm = models.DecimalField(max_digits=20, decimal_places=2, default=0)
+
+    source_dimension_type = models.CharField(
+        max_length=32, blank=True, default='',
+        help_text="Dimension type used for matching (e.g. 'site', 'trafficSource')"
+    )
+    source_dimension_value = models.CharField(
+        max_length=255, blank=True, default='',
+        help_text="Dimension value that matched the tracking assignment"
+    )
+
+    calculated_at = models.DateTimeField(auto_now=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'report_sub_publisher_earnings'
+        unique_together = ['sub_publisher', 'date']
+        ordering = ['-date', 'sub_publisher__email']
+        indexes = [
+            models.Index(fields=['sub_publisher', '-date']),
+            models.Index(fields=['partner_admin', '-date']),
+            models.Index(fields=['date']),
+        ]
+
+    def __str__(self):
+        return (
+            f"{self.sub_publisher.email} | {self.date} | "
+            f"gross={self.gross_revenue} fee={self.fee_amount} net={self.net_revenue}"
+        )
+
+    def calculate_net(self):
+        from decimal import Decimal
+        self.fee_amount = (self.gross_revenue * self.fee_percentage / Decimal('100')).quantize(Decimal('0.000001'))
+        self.net_revenue = self.gross_revenue - self.fee_amount
+        if self.impressions > 0:
+            self.ecpm = (self.gross_revenue / self.impressions * 1000).quantize(Decimal('0.01'))
+        return self.net_revenue

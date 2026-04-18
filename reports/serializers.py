@@ -19,7 +19,7 @@ class MasterMetaDataSerializer(serializers.ModelSerializer):
         model = MasterMetaData
         fields = [
             'id', 'date', 'dimension_type', 'dimension_value', 'currency',
-            'parent_network_code', 'child_network_code',
+            'network_code',
             'publisher_id', 'publisher_email', 'publisher_name',
 
             'impressions', 'revenue', 'revenue_usd', 'ecpm', 'clicks', 'ctr',

@@ -364,33 +364,19 @@ GAM_SERVICE_ACCOUNT_INFO = {
     'client_x509_cert_url': _gam_credentials.get('client_x509_cert_url', '')
 }
 
-# GAM API Configuration - CORRECTED SCOPES
 GAM_CONFIG = {
-    'PARENT_NETWORK_CODE': config('GAM_PARENT_NETWORK_CODE', default='23310681755'),
-    'CHILD_NETWORK_CODE': config('GAM_CHILD_NETWORK_CODE', default='23310681755'),
     'APPLICATION_NAME': config('GAM_APPLICATION_NAME', default='Managed Inventory Publisher Dashboard'),
     'API_VERSION': config('GAM_API_VERSION', default='v202508'),
+    'PRIVATE_KEY_FILE': config('GAM_PRIVATE_KEY_FILE', default='key.json'),
     'SERVICE_ACCOUNT_INFO': GAM_SERVICE_ACCOUNT_INFO,
-    # CRITICAL FIX: Use the correct scope for Ad Manager SOAP API
-    'SCOPES': ['https://www.googleapis.com/auth/dfp'],  # This is correct for SOAP API
+    'SCOPES': ['https://www.googleapis.com/auth/dfp'],
 }
 
-# Individual GAM settings for easy access
-GAM_PARENT_NETWORK_CODE = GAM_CONFIG['PARENT_NETWORK_CODE']
-GAM_CHILD_NETWORK_CODE = GAM_CONFIG['CHILD_NETWORK_CODE']
 GAM_APPLICATION_NAME = GAM_CONFIG['APPLICATION_NAME']
 GAM_API_VERSION = GAM_CONFIG['API_VERSION']
 
 # CRITICAL: Add this missing field that your service account needs
 GAM_SERVICE_ACCOUNT_EMAIL = GAM_SERVICE_ACCOUNT_INFO.get('client_email')
-
-# =====================================================================
-# OWNED & OPERATED (O&O) GAM CONFIGURATION
-# Second GAM 360 account for O&O inventory (no child networks)
-# =====================================================================
-GAM_OO_NETWORK_CODE = config('GAM_OO_NETWORK_CODE', default='23341212234')
-GAM_OO_PRIVATE_KEY_FILE = config('GAM_OO_PRIVATE_KEY_FILE', default='the@hnt.json')
-GAM_OO_DELEGATED_ACCOUNT = config('GAM_OO_DELEGATED_ACCOUNT', default='report@hnt-gaming.iam.gserviceaccount.com')
 
 # Print GAM configuration in development
 # GAM configuration loaded - validation happens in services

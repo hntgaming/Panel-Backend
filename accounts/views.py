@@ -20,7 +20,7 @@ from django.conf import settings
 from core.models import StatusChoices
 # Removed gam_accounts dependencies
 
-from .models import PublisherPermission, User, Site
+from .models import PublisherPermission, User, Site, GAMCredential
 from reports.gam_client import GAMClientService
 
 logger = logging.getLogger(__name__)
@@ -74,60 +74,6 @@ class UserRegistrationView(generics.CreateAPIView):
                 'access': str(refresh.access_token),
             }
         }, status=status.HTTP_201_CREATED)
-
-
-@api_view(['POST'])
-@permission_classes([AllowAny])
-def public_signup_view(request):
-    """
-    Public signup endpoint for new publishers
-    POST /api/auth/public-signup/
-    
-    Body:
-    {
-        "name": "John Doe",
-        "phone": "+1234567890",
-        "email": "publisher@example.com",
-        "site_link": "https://example.com"
-    }
-    
-    This endpoint:
-    1. Creates a new publisher user
-    2. Sends MCM invitation via Google AdManager API
-    3. Sends welcome email with password reset link
-    """
-    from .serializers import PublicSignupSerializer
-    
-    serializer = PublicSignupSerializer(data=request.data)
-    
-    if serializer.is_valid():
-        try:
-            user = serializer.save()
-            
-            return Response({
-                'success': True,
-                'message': 'Signup successful! Please check your email to set your password and accept the GAM invitation.',
-                'user': {
-                    'id': user.id,
-                    'email': user.email,
-                    'name': user.get_full_name()
-                }
-            }, status=status.HTTP_201_CREATED)
-            
-        except Exception as e:
-            import traceback
-            error_details = traceback.format_exc()
-            logger.error(f"❌ Public signup error: {error_details}")
-            
-            return Response({
-                'success': False,
-                'error': f'Signup failed: {str(e)}'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-    
-    return Response({
-        'success': False,
-        'errors': serializer.errors
-    }, status=status.HTTP_400_BAD_REQUEST)
 
 
 @api_view(['POST'])
@@ -347,9 +293,9 @@ def user_dashboard_view(request):
             'total_users': User.objects.count(),
             'active_users': User.objects.filter(status='active').count(),
             'admin_users': User.objects.filter(role='admin').count(),
-            'publisher_users': User.objects.filter(role='publisher').count(),
+            'partner_admin_users': User.objects.filter(role='partner_admin').count(),
         }
-    elif user.role.upper() == 'PUBLISHER':
+    elif user.role == 'partner_admin':
         publisher_permissions = list(
             PublisherPermission.objects.filter(user=user).values_list('permission', flat=True)
         )
@@ -414,8 +360,8 @@ class CustomPasswordResetConfirmView(PasswordResetConfirmView):
         response = super().form_valid(form)
 
         user = form.user
-        # Publishers are activated automatically
-        if user.role == user.UserRole.PUBLISHER and user.status == StatusChoices.PENDING_APPROVAL:
+        # Partner admins are activated automatically after password reset
+        if user.role == user.UserRole.PARTNER_ADMIN and user.status == StatusChoices.PENDING_APPROVAL:
             user.status = StatusChoices.ACTIVE
             user.save(update_fields=["status"])
 
@@ -465,7 +411,7 @@ def update_partner_permissions(request, user_id):
     Simplified for Managed Inventory Publisher Dashboard - no parent_gam_network needed
     """
     try:
-        user = User.objects.get(id=user_id, role='publisher')
+        user = User.objects.get(id=user_id, role='partner_admin')
     except User.DoesNotExist:
         return Response({"error": "Partner not found."}, status=status.HTTP_404_NOT_FOUND)
 
@@ -500,7 +446,7 @@ def update_partner_permissions(request, user_id):
 @permission_classes([IsAuthenticated])  # Or AdminOnlyPermission
 def get_partner_permissions(request, user_id):
     try:
-        user = User.objects.get(id=user_id, role='publisher')
+        user = User.objects.get(id=user_id, role='partner_admin')
     except User.DoesNotExist:
         return Response({"error": "Partner not found"}, status=status.HTTP_404_NOT_FOUND)
 
@@ -525,7 +471,7 @@ def list_partners(request):
     GET /api/auth/partners/
     List all partner users for admin dashboard
     """
-    partners = User.objects.filter(role='publisher').order_by('-date_joined')
+    partners = User.objects.filter(role='partner_admin').order_by('-date_joined')
     serializer = PublisherListSerializer(partners, many=True)
     return Response(serializer.data, status=status.HTTP_200_OK)
 
@@ -572,8 +518,8 @@ class PasswordResetConfirmAPIView(APIView):
         user.set_password(password)
         user.save()
 
-        # Activate pending publishers
-        if user.role == user.UserRole.PUBLISHER and user.status == StatusChoices.PENDING_APPROVAL:
+        # Activate pending partner admins
+        if user.role == user.UserRole.PARTNER_ADMIN and user.status == StatusChoices.PENDING_APPROVAL:
             user.status = StatusChoices.ACTIVE
             user.save(update_fields=["status"])
 
@@ -586,7 +532,7 @@ def delete_partner_user(request, partner_id):
     Permanently delete a partner user and all associated data.
     """
     try:
-        partner = User.objects.get(id=partner_id, role='publisher')  # Optional: filter by role
+        partner = User.objects.get(id=partner_id, role='partner_admin')
         email = partner.email
         partner.delete()
         return Response({
@@ -678,17 +624,15 @@ def change_password_view(request):
     }, status=status.HTTP_200_OK)
 
 
-# Simplified publisher management functions for managed inventory
-
 @api_view(['GET'])
 @permission_classes([IsAuthenticated, IsAdminUser])
-def list_publishers(request):
+def list_partners_full(request):
     """
-    GET /api/auth/publishers/ - List all publishers
+    GET /api/auth/publishers/ - List all partner admins (kept for admin manage-partners page)
     """
     try:
-        publishers = User.objects.filter(role='publisher').prefetch_related('sites').order_by('-date_joined')
-        serializer = PublisherListSerializer(publishers, many=True)
+        partners = User.objects.filter(role='partner_admin').prefetch_related('sites').order_by('-date_joined')
+        serializer = PublisherListSerializer(partners, many=True)
         return Response(serializer.data)
     except Exception as e:
         return Response({
@@ -698,89 +642,29 @@ def list_publishers(request):
 
 @api_view(['PUT'])
 @permission_classes([IsAuthenticated, IsAdminUser])
-def update_publisher(request, user_id):
+def update_partner(request, user_id):
     """
-    PUT /api/auth/publishers/{user_id}/ - Update publisher details
+    PUT /api/auth/publishers/{user_id}/ - Update partner admin details
     """
     try:
-        publisher = User.objects.get(id=user_id, role='publisher')
+        partner = User.objects.get(id=user_id, role='partner_admin')
         
-        allowed_fields = ['company_name', 'site_url', 'network_id', 'revenue_share_percentage', 'phone_number', 'gam_type']
+        allowed_fields = ['company_name', 'site_url', 'revenue_share_percentage', 'phone_number']
         for field in allowed_fields:
             if field in request.data:
-                setattr(publisher, field, request.data[field])
+                setattr(partner, field, request.data[field])
         
-        publisher.save()
+        partner.save()
         
-        serializer = PublisherListSerializer(publisher)
+        serializer = PublisherListSerializer(partner)
         return Response({
             'success': True,
-            'message': 'Publisher updated successfully',
+            'message': 'Partner updated successfully',
             'data': serializer.data
         })
     except User.DoesNotExist:
         return Response({
-            'error': 'Publisher not found'
-        }, status=status.HTTP_404_NOT_FOUND)
-    except Exception as e:
-        return Response({
-            'error': str(e)
-        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-@api_view(['GET'])
-@permission_classes([IsAuthenticated, IsAdminUser])
-def get_publisher_permissions(request, user_id):
-    """
-    GET /api/auth/publishers/{user_id}/permissions/ - Get publisher permissions
-    """
-    try:
-        publisher = User.objects.get(id=user_id, role='publisher')
-        permissions = PublisherPermission.objects.filter(user=publisher)
-        permission_list = [p.permission for p in permissions]
-        
-        return Response({
-            'user_id': publisher.id,
-            'email': publisher.email,
-            'permissions': permission_list
-        })
-    except User.DoesNotExist:
-        return Response({
-            'error': 'Publisher not found'
-        }, status=status.HTTP_404_NOT_FOUND)
-    except Exception as e:
-        return Response({
-            'error': str(e)
-        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-@api_view(['PATCH'])
-@permission_classes([IsAuthenticated, IsAdminUser])
-def update_publisher_permissions(request, user_id):
-    """
-    PATCH /api/auth/users/{user_id}/permissions/ - Update publisher permissions
-    """
-    try:
-        publisher = User.objects.get(id=user_id, role='publisher')
-        permissions = request.data.get('permissions', [])
-        
-        # Clear existing permissions
-        PublisherPermission.objects.filter(user=publisher).delete()
-        
-        # Add new permissions
-        for permission in permissions:
-            PublisherPermission.objects.create(
-                user=publisher,
-                permission=permission
-            )
-        
-        return Response({
-            'success': True,
-            'message': 'Permissions updated successfully'
-        })
-    except User.DoesNotExist:
-        return Response({
-            'error': 'Publisher not found'
+            'error': 'Partner not found'
         }, status=status.HTTP_404_NOT_FOUND)
     except Exception as e:
         return Response({
@@ -790,21 +674,21 @@ def update_publisher_permissions(request, user_id):
 
 @api_view(['DELETE'])
 @permission_classes([IsAuthenticated, IsAdminUser])
-def delete_publisher_user(request, user_id):
+def delete_partner_admin_user(request, user_id):
     """
-    DELETE /api/auth/publishers/{user_id}/delete/ - Delete publisher
+    DELETE /api/auth/publishers/{user_id}/delete/ - Delete partner admin
     """
     try:
-        publisher = User.objects.get(id=user_id, role='publisher')
-        publisher.delete()
+        partner = User.objects.get(id=user_id, role='partner_admin')
+        partner.delete()
         
         return Response({
             'success': True,
-            'message': 'Publisher deleted successfully'
+            'message': 'Partner deleted successfully'
         })
     except User.DoesNotExist:
         return Response({
-            'error': 'Publisher not found'
+            'error': 'Partner not found'
         }, status=status.HTTP_404_NOT_FOUND)
     except Exception as e:
         return Response({
@@ -822,7 +706,7 @@ from .serializers import PaymentDetailSerializer, PaymentDetailListSerializer
 
 class PaymentDetailView(APIView):
     """
-    GET/POST/PUT payment details for current user (publishers only)
+    GET/POST/PUT payment details for current user
     """
     permission_classes = [IsAuthenticated]
     
@@ -899,9 +783,9 @@ class SiteListView(generics.ListAPIView):
     """
     GET all sites
     - Admin: sees all sites
-    - Publisher: sees only their own sites
+    - Partner admin: sees only their own sites
     
-    Also creates Site records for existing publishers who don't have sites yet
+    Also creates Site records for existing partner admins who don't have sites yet
     """
     permission_classes = [IsAuthenticated]
     serializer_class = SiteSerializer
@@ -911,22 +795,18 @@ class SiteListView(generics.ListAPIView):
         
         if self.request.user.is_admin_user:
             publishers_with_url = User.objects.filter(
-                role=User.UserRole.PUBLISHER,
+                role=User.UserRole.PARTNER_ADMIN,
                 site_url__isnull=False
             ).exclude(site_url='')
         else:
             publishers_with_url = User.objects.filter(
                 id=self.request.user.id,
-                role=User.UserRole.PUBLISHER,
+                role=User.UserRole.PARTNER_ADMIN,
                 site_url__isnull=False
             ).exclude(site_url='')
         
         for publisher in publishers_with_url:
-            default_status = (
-                Site.GamStatus.READY
-                if getattr(publisher, 'gam_type', 'mcm') == 'o_and_o'
-                else Site.GamStatus.GETTING_READY
-            )
+            default_status = Site.GamStatus.GETTING_READY
             Site.objects.get_or_create(
                 publisher=publisher,
                 url=publisher.site_url,
@@ -984,119 +864,430 @@ def sync_sites_status_view(request):
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
-@api_view(['POST'])
+
+
+
+# =============================================================================
+# SUB-PUBLISHER MANAGEMENT
+# =============================================================================
+
+from .permissions import IsPartnerAdminOrAdmin, IsSubPublisherOwnerOrAdmin
+from .serializers import (
+    SubPublisherListSerializer,
+    SubPublisherCreateSerializer,
+    SubPublisherUpdateSerializer,
+    TrackingAssignmentSerializer,
+    TrackingAssignmentCreateSerializer,
+    SubdomainSerializer,
+    TutorialSerializer,
+    TutorialListSerializer,
+)
+from .models import TrackingAssignment, Subdomain, Tutorial
+
+
+@api_view(['GET', 'POST'])
+@permission_classes([IsAuthenticated, IsPartnerAdminOrAdmin])
+def sub_publisher_list_create(request):
+    """
+    GET  — list sub-publishers owned by the requesting partner_admin (admin sees all).
+    POST — create a new sub-publisher under the requesting partner_admin.
+    """
+    if request.method == 'GET':
+        qs = User.objects.filter(role=User.UserRole.SUB_PUBLISHER).select_related('tracking_assignment')
+        if request.user.role == 'partner_admin':
+            qs = qs.filter(parent_publisher=request.user)
+        serializer = SubPublisherListSerializer(qs, many=True)
+        return Response(serializer.data)
+
+    serializer = SubPublisherCreateSerializer(data=request.data, context={'request': request})
+    serializer.is_valid(raise_exception=True)
+    sub_pub = serializer.save()
+    return Response(
+        SubPublisherListSerializer(sub_pub).data,
+        status=status.HTTP_201_CREATED,
+    )
+
+
+@api_view(['GET', 'PUT', 'DELETE'])
 @permission_classes([IsAuthenticated])
-def check_ads_txt_view(request):
+def sub_publisher_detail(request, sub_id):
     """
-    Check ads.txt files for all sites
-    Admin only
+    GET    — detail view (partner_admin sees own children, admin sees all, sub_pub sees self).
+    PUT    — update sub-publisher profile/fee.
+    DELETE — soft-delete (set status to SUSPENDED).
     """
-    if not request.user.is_admin_user:
-        return Response(
-            {'error': 'Only admin users can check ads.txt files'},
-            status=status.HTTP_403_FORBIDDEN
-        )
-    
     try:
-        from accounts.ads_txt_checker import AdsTxtChecker
-        
-        # Check ads.txt for all sites
-        result = AdsTxtChecker.check_all_sites()
-        
-        if not result.get('success'):
-            return Response({
-                'success': False,
-                'error': result.get('error', 'Failed to check ads.txt files')
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        
-        return Response({
-            'success': True,
-            'message': f'Checked {result.get("checked", 0)} sites',
-            'checked': result.get('checked', 0),
-            'found': result.get('found', 0),
-            'missing': result.get('missing', 0),
-            'errors': result.get('errors', 0),
-            'total': result.get('total', 0)
-        })
-        
-    except Exception as e:
-        logger.error(f"❌ Error checking ads.txt files: {str(e)}")
-        return Response({
-            'success': False,
-            'error': f'Failed to check ads.txt files: {str(e)}'
-        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        sub_pub = User.objects.select_related('tracking_assignment').get(
+            id=sub_id, role=User.UserRole.SUB_PUBLISHER,
+        )
+    except User.DoesNotExist:
+        return Response({'error': 'Sub-publisher not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+    perm = IsSubPublisherOwnerOrAdmin()
+    if not perm.has_object_permission(request, None, sub_pub):
+        return Response({'error': 'Permission denied.'}, status=status.HTTP_403_FORBIDDEN)
+
+    if request.method == 'GET':
+        return Response(SubPublisherListSerializer(sub_pub).data)
+
+    if request.method == 'DELETE':
+        sub_pub.status = StatusChoices.SUSPENDED
+        sub_pub.save(update_fields=['status'])
+        return Response({'message': 'Sub-publisher suspended.'})
+
+    serializer = SubPublisherUpdateSerializer(sub_pub, data=request.data, partial=True)
+    serializer.is_valid(raise_exception=True)
+    serializer.save()
+    return Response(SubPublisherListSerializer(sub_pub).data)
+
+
+@api_view(['GET', 'POST', 'PUT'])
+@permission_classes([IsAuthenticated, IsPartnerAdminOrAdmin])
+def sub_publisher_tracking(request, sub_id):
+    """
+    GET  — view current tracking assignment (subdomain).
+    POST — create tracking assignment (first time).
+    PUT  — update tracking assignment subdomain.
+    """
+    try:
+        sub_pub = User.objects.get(id=sub_id, role=User.UserRole.SUB_PUBLISHER)
+    except User.DoesNotExist:
+        return Response({'error': 'Sub-publisher not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+    if request.user.role == 'partner_admin' and sub_pub.parent_publisher_id != request.user.id:
+        return Response({'error': 'Permission denied.'}, status=status.HTTP_403_FORBIDDEN)
+
+    if request.method == 'GET':
+        try:
+            ta = sub_pub.tracking_assignment
+            return Response(TrackingAssignmentSerializer(ta).data)
+        except TrackingAssignment.DoesNotExist:
+            return Response({'tracking': None})
+
+    ser = TrackingAssignmentCreateSerializer(data=request.data)
+    ser.is_valid(raise_exception=True)
+    data = ser.validated_data
+
+    if request.method == 'POST':
+        if hasattr(sub_pub, 'tracking_assignment'):
+            try:
+                sub_pub.tracking_assignment
+                return Response(
+                    {'error': 'Tracking assignment already exists. Use PUT to update.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            except TrackingAssignment.DoesNotExist:
+                pass
+
+        ta = TrackingAssignment.objects.create(
+            sub_publisher=sub_pub,
+            partner_admin=request.user,
+            subdomain=data['subdomain'],
+            notes=data.get('notes', ''),
+        )
+        return Response(TrackingAssignmentSerializer(ta).data, status=status.HTTP_201_CREATED)
+
+    # PUT
+    try:
+        ta = sub_pub.tracking_assignment
+    except TrackingAssignment.DoesNotExist:
+        return Response({'error': 'No tracking assignment to update. Use POST.'}, status=status.HTTP_404_NOT_FOUND)
+
+    ta.subdomain = data['subdomain']
+    ta.notes = data.get('notes', ta.notes)
+    ta.save()
+    return Response(TrackingAssignmentSerializer(ta).data)
+
+
+@api_view(['GET', 'POST', 'DELETE'])
+@permission_classes([IsAuthenticated, IsPartnerAdminOrAdmin])
+def subdomain_list_create_delete(request, subdomain_id=None):
+    """
+    GET    — list subdomains for the partner_admin.
+    POST   — create a new subdomain.
+    DELETE — delete a subdomain by ID (passed as URL param).
+    """
+    if request.method == 'DELETE' and subdomain_id:
+        try:
+            sd = Subdomain.objects.get(id=subdomain_id)
+        except Subdomain.DoesNotExist:
+            return Response({'error': 'Subdomain not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if request.user.role == 'partner_admin' and sd.partner_admin_id != request.user.id:
+            return Response({'error': 'Permission denied.'}, status=status.HTTP_403_FORBIDDEN)
+        sd.delete()
+        return Response({'message': 'Subdomain deleted.'})
+
+    if request.method == 'GET':
+        qs = Subdomain.objects.select_related('assigned_to')
+        if request.user.role == 'partner_admin':
+            qs = qs.filter(partner_admin=request.user)
+        return Response(SubdomainSerializer(qs, many=True).data)
+
+    serializer = SubdomainSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    serializer.save(partner_admin=request.user)
+    return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+# =============================================================================
+# TUTORIALS API
+# =============================================================================
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def tutorial_list(request):
+    """List tutorials filtered by user role."""
+    qs = Tutorial.objects.filter(is_published=True)
+    user_role = request.user.role
+    filtered = []
+    for t in qs:
+        if not t.target_roles or user_role in t.target_roles:
+            filtered.append(t)
+    return Response(TutorialListSerializer(filtered, many=True).data)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def tutorial_detail(request, slug):
+    """Get single tutorial by slug."""
+    try:
+        t = Tutorial.objects.get(slug=slug, is_published=True)
+    except Tutorial.DoesNotExist:
+        return Response({'error': 'Tutorial not found.'}, status=status.HTTP_404_NOT_FOUND)
+    user_role = request.user.role
+    if t.target_roles and user_role not in t.target_roles:
+        return Response({'error': 'Not available for your role.'}, status=status.HTTP_403_FORBIDDEN)
+    return Response(TutorialSerializer(t).data)
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def fetch_missing_network_ids_view(request):
-    """
-    Fetch network IDs from GAM for publishers where network_id is missing
-    Admin only
-    """
-    if not request.user.is_admin_user:
-        return Response(
-            {'error': 'Only admin users can fetch network IDs'},
-            status=status.HTTP_403_FORBIDDEN
-        )
-    
+@permission_classes([IsAuthenticated, IsAdminUser])
+def tutorial_create(request):
+    """Admin-only: create a tutorial."""
+    serializer = TutorialSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    serializer.save()
+    return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+# ---------------------------------------------------------------------------
+# GAM Credential Management Views
+# ---------------------------------------------------------------------------
+from .serializers import GAMCredentialSerializer, GAMConnectSerializer
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated, IsPartnerAdminOrAdmin])
+def gam_status(request):
+    """Return GAM connection status for the current partner admin."""
     try:
-        # Get all publishers with missing network_id
-        publishers_missing_network = User.objects.filter(
-            role=User.UserRole.PUBLISHER,
-            network_id__in=['', None]
-        ).exclude(email__isnull=True).exclude(email='')
-        
-        if not publishers_missing_network.exists():
-            return Response({
-                'success': True,
-                'message': 'No publishers with missing network IDs found',
-                'updated': 0
-            })
-        
-        # Get their emails
-        publisher_emails = list(publishers_missing_network.values_list('email', flat=True))
-        
-        # Fetch network IDs from GAM
-        gam_result = GAMClientService.fetch_network_ids_for_publishers(publisher_emails)
-        
-        if not gam_result.get('success'):
-            return Response({
-                'success': False,
-                'error': gam_result.get('error', 'Failed to fetch network IDs from GAM')
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        
-        # Update publishers with found network IDs
-        updated_count = 0
-        results = gam_result.get('results', [])
-        
-        for result in results:
-            email = result.get('email')
-            network_id = result.get('network_id')
-            
-            if email and network_id:
-                try:
-                    publisher = User.objects.get(email=email, role=User.UserRole.PUBLISHER)
-                    publisher.network_id = network_id
-                    publisher.save(update_fields=['network_id'])
-                    updated_count += 1
-                    logger.debug(f"Updated network_id for {email}: {network_id}")
-                except User.DoesNotExist:
-                    logger.warning(f"⚠️ Publisher not found: {email}")
-                except Exception as e:
-                    logger.error(f"❌ Failed to update {email}: {str(e)}")
-        
+        cred = GAMCredential.objects.get(partner_admin=request.user)
+        return Response(GAMCredentialSerializer(cred).data)
+    except GAMCredential.DoesNotExist:
+        return Response({
+            'is_connected': False,
+            'service_account_email': getattr(settings, 'GAM_SERVICE_ACCOUNT_EMAIL', ''),
+        })
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated, IsPartnerAdminOrAdmin])
+def gam_connect(request):
+    """
+    Connect partner's GAM account via service account method.
+    Partner must add our service email as admin in their GAM first.
+    """
+    serializer = GAMConnectSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+
+    network_code = serializer.validated_data['network_code']
+    auth_method = serializer.validated_data.get('auth_method', GAMCredential.AuthMethod.SERVICE_ACCOUNT)
+
+    cred, created = GAMCredential.objects.update_or_create(
+        partner_admin=request.user,
+        defaults={
+            'auth_method': auth_method,
+            'network_code': network_code,
+            'is_connected': False,
+            'connection_error': '',
+        },
+    )
+
+    test_result = GAMClientService.test_connection_for_partner(request.user)
+    if test_result['success']:
+        cred.is_connected = True
+        cred.connection_error = ''
+        cred.last_synced_at = timezone.now()
+        cred.save(update_fields=['is_connected', 'connection_error', 'last_synced_at'])
         return Response({
             'success': True,
-            'message': f'Fetched network IDs from GAM',
-            'total_checked': len(publisher_emails),
-            'total_found': gam_result.get('total_found', 0),
-            'updated': updated_count
+            'message': 'GAM account connected successfully.',
+            'credential': GAMCredentialSerializer(cred).data,
+            'network_info': test_result,
         })
-        
-    except Exception as e:
-        logger.error(f"❌ Error fetching network IDs: {str(e)}")
+    else:
+        cred.connection_error = test_result.get('error', 'Connection test failed.')
+        cred.save(update_fields=['connection_error'])
         return Response({
             'success': False,
-            'error': f'Failed to fetch network IDs: {str(e)}'
-        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            'error': test_result.get('error', 'Connection test failed.'),
+            'credential': GAMCredentialSerializer(cred).data,
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated, IsPartnerAdminOrAdmin])
+def gam_test(request):
+    """Test the current GAM connection for the partner admin."""
+    try:
+        cred = GAMCredential.objects.get(partner_admin=request.user)
+    except GAMCredential.DoesNotExist:
+        return Response(
+            {'error': 'No GAM credentials configured. Connect first.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    test_result = GAMClientService.test_connection_for_partner(request.user)
+    if test_result['success']:
+        cred.is_connected = True
+        cred.connection_error = ''
+        cred.last_synced_at = timezone.now()
+        cred.save(update_fields=['is_connected', 'connection_error', 'last_synced_at'])
+    else:
+        cred.is_connected = False
+        cred.connection_error = test_result.get('error', 'Test failed.')
+        cred.save(update_fields=['is_connected', 'connection_error'])
+
+    return Response({
+        'success': test_result['success'],
+        **test_result,
+        'credential': GAMCredentialSerializer(cred).data,
+    })
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated, IsPartnerAdminOrAdmin])
+def gam_disconnect(request):
+    """Disconnect GAM credentials for the current partner admin."""
+    deleted, _ = GAMCredential.objects.filter(partner_admin=request.user).delete()
+    if deleted:
+        GAMClientService.clear_partner_cache(request.user.id)
+        return Response({'success': True, 'message': 'GAM account disconnected.'})
+    return Response(
+        {'error': 'No GAM credentials to disconnect.'},
+        status=status.HTTP_400_BAD_REQUEST,
+    )
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated, IsPartnerAdminOrAdmin])
+def gam_oauth_init(request):
+    """
+    Start OAuth 2.0 flow — returns the Google consent URL.
+    Partner clicks the URL, authenticates, and Google redirects back with an auth code.
+    """
+    from google_auth_oauthlib.flow import Flow
+
+    client_config = {
+        'web': {
+            'client_id': getattr(settings, 'GAM_OAUTH_CLIENT_ID', ''),
+            'client_secret': getattr(settings, 'GAM_OAUTH_CLIENT_SECRET', ''),
+            'auth_uri': 'https://accounts.google.com/o/oauth2/auth',
+            'token_uri': 'https://oauth2.googleapis.com/token',
+        }
+    }
+
+    redirect_uri = getattr(settings, 'GAM_OAUTH_REDIRECT_URI', '')
+    if not client_config['web']['client_id'] or not redirect_uri:
+        return Response(
+            {'error': 'OAuth 2.0 is not configured on this server.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    flow = Flow.from_client_config(
+        client_config,
+        scopes=['https://www.googleapis.com/auth/dfp'],
+        redirect_uri=redirect_uri,
+    )
+
+    auth_url, state = flow.authorization_url(
+        access_type='offline',
+        include_granted_scopes='true',
+        prompt='consent',
+        state=str(request.user.id),
+    )
+
+    return Response({'auth_url': auth_url, 'state': state})
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated, IsPartnerAdminOrAdmin])
+def gam_oauth_callback(request):
+    """
+    Handle OAuth 2.0 callback — exchange auth code for refresh token.
+    Expects: { "code": "...", "network_code": "..." }
+    """
+    from google_auth_oauthlib.flow import Flow
+
+    code = request.data.get('code')
+    network_code = request.data.get('network_code', '')
+    if not code:
+        return Response({'error': 'Authorization code is required.'}, status=status.HTTP_400_BAD_REQUEST)
+    if not network_code:
+        return Response({'error': 'Network code is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    client_config = {
+        'web': {
+            'client_id': getattr(settings, 'GAM_OAUTH_CLIENT_ID', ''),
+            'client_secret': getattr(settings, 'GAM_OAUTH_CLIENT_SECRET', ''),
+            'auth_uri': 'https://accounts.google.com/o/oauth2/auth',
+            'token_uri': 'https://oauth2.googleapis.com/token',
+        }
+    }
+
+    redirect_uri = getattr(settings, 'GAM_OAUTH_REDIRECT_URI', '')
+
+    try:
+        flow = Flow.from_client_config(
+            client_config,
+            scopes=['https://www.googleapis.com/auth/dfp'],
+            redirect_uri=redirect_uri,
+        )
+        flow.fetch_token(code=code)
+        credentials = flow.credentials
+
+        cred, _ = GAMCredential.objects.update_or_create(
+            partner_admin=request.user,
+            defaults={
+                'auth_method': GAMCredential.AuthMethod.OAUTH2,
+                'network_code': network_code,
+                'oauth_refresh_token': credentials.refresh_token or '',
+                'oauth_client_id': client_config['web']['client_id'],
+                'is_connected': True,
+                'connection_error': '',
+                'last_synced_at': timezone.now(),
+            },
+        )
+
+        test_result = GAMClientService.test_connection_for_partner(request.user)
+        if not test_result['success']:
+            cred.is_connected = False
+            cred.connection_error = test_result.get('error', 'Post-OAuth test failed.')
+            cred.save(update_fields=['is_connected', 'connection_error'])
+            return Response({
+                'success': False,
+                'error': test_result.get('error', 'Connected but test failed.'),
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({
+            'success': True,
+            'message': 'OAuth 2.0 connected successfully.',
+            'credential': GAMCredentialSerializer(cred).data,
+        })
+
+    except Exception as e:
+        logger.error(f"OAuth callback failed for {request.user.email}: {e}")
+        return Response(
+            {'error': f'OAuth authentication failed: {str(e)}'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )

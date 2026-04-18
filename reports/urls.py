@@ -1,10 +1,7 @@
-from django.urls import path, include
+from django.urls import path
 from . import views
 app_name = 'reports'
 urlpatterns = [
-    # Unified tracking subsystem
-    path('tracking/', include('reports.tracking_urls')),
-
     path(
         'trigger-sync/', 
         views.trigger_sync_view, 
@@ -80,4 +77,9 @@ urlpatterns = [
         views.MonthlyEarningDetailView.as_view(),
         name='earnings-detail'
     ),
+
+    # Sub-publisher earnings
+    path('sub-publisher-earnings/', views.sub_publisher_earnings_view, name='sub-publisher-earnings'),
+    path('calculate-sub-publisher-earnings/', views.calculate_sub_publisher_earnings_view, name='calculate-sub-publisher-earnings'),
+    path('partner-rollup/', views.partner_rollup_view, name='partner-rollup'),
 ]

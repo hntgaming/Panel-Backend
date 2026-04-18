@@ -54,22 +54,11 @@ def get_cache_key(prefix, user_id, **kwargs):
 
 
 def apply_publisher_filter(queryset, user):
-    """
-    Apply role-based report filtering for both MCM and O&O publishers.
-    MCM: filter by child_network_code = user.network_id
-    O&O: filter by publisher_id = user.id
-    """
+    """Apply role-based report filtering. Non-admin users see only their own data."""
     if user.is_admin_user:
         return queryset
     
-    gam_type = getattr(user, 'gam_type', 'mcm') or 'mcm'
-    
-    if gam_type == 'o_and_o':
-        return queryset.filter(publisher_id=user.id)
-    else:
-        if hasattr(user, 'network_id') and user.network_id:
-            return queryset.filter(child_network_code=user.network_id)
-        return queryset.none()
+    return queryset.filter(publisher_id=user.id)
 
 
 # =============================================================================
@@ -95,13 +84,9 @@ class ReportDataListView(generics.ListAPIView):
         queryset = apply_publisher_filter(queryset, self.request.user)
         
         # Apply filters
-        parent_network = self.request.query_params.get('parent_network')
-        if parent_network:
-            queryset = queryset.filter(parent_network_code=parent_network)
-        
-        child_network = self.request.query_params.get('child_network')
-        if child_network:
-            queryset = queryset.filter(child_network_code=child_network)
+        network = self.request.query_params.get('network')
+        if network:
+            queryset = queryset.filter(network_code=network)
         
         publisher_id = self.request.query_params.get('publisher')
         if publisher_id:
@@ -179,13 +164,11 @@ def report_analytics_view(request):
         total_ad_requests=Sum('total_ad_requests')
     )
     
-    # Network breakdown
     network_breakdown = queryset.values(
-        'parent_network_code'
+        'network_code'
     ).annotate(
         total_revenue=Sum('revenue'),
         total_impressions=Sum('impressions'),
-        child_count=Count('child_network_code', distinct=True)
     ).order_by('-total_revenue')
     
     # Dimension breakdown
@@ -198,12 +181,9 @@ def report_analytics_view(request):
     # Partner performance (admin only)
     partner_breakdown = []
     if user.is_admin_user:
-        partner_breakdown = queryset.filter(
-            parent_network_code__isnull=False
-        ).values('parent_network_code').annotate(
+        partner_breakdown = queryset.values('publisher_id').annotate(
             total_revenue=Sum('revenue'),
             total_impressions=Sum('impressions'),
-            child_count=Count('child_network_code', distinct=True)
         ).order_by('-total_revenue')
     
     # Recent sync status
@@ -346,28 +326,19 @@ def report_dashboard_view(request):
     
     # Network counts
     if user.is_admin_user:
-        from core.models import StatusChoices
-        # Count active publishers with network_id
-        total_networks = 1  # Parent network count (simplified for managed inventory)
-        active_children = User.objects.filter(
-            role=User.UserRole.PUBLISHER,
-            status=StatusChoices.ACTIVE,
-            network_id__isnull=False
-        ).exclude(network_id='').count()
-        total_partners = User.objects.filter(role=User.UserRole.PUBLISHER).count()
+        from accounts.models import GAMCredential
+        connected_partners = GAMCredential.objects.filter(is_connected=True).count()
+        total_partners = User.objects.filter(role=User.UserRole.PARTNER_ADMIN).count()
     else:
-        # Partner view
-        # Simplified for managed inventory - return default values
-        total_networks = 0
-        active_children = 0
-        total_partners = 1  # Just themselves
+        connected_partners = 0
+        total_partners = 1
     
     # Top performing networks (by revenue)
     top_networks = base_queryset.filter(
         date__range=[week_ago, today],
         dimension_type='overview'
     ).values(
-        'parent_network_code'
+        'publisher_id'
     ).annotate(
         total_revenue=Sum('revenue'),
         total_impressions=Sum('impressions')
@@ -375,14 +346,13 @@ def report_dashboard_view(request):
     
     # Recent activity
     recent_activity = base_queryset.order_by('-created_at')[:10].values(
-        'date', 'child_network_code', 'dimension_type', 
+        'date', 'network_code', 'dimension_type', 
         'revenue', 'impressions', 'created_at'
     )
     
     dashboard_data = {
         'network_counts': {
-            'total_networks': total_networks,
-            'active_children': active_children,
+            'connected_partners': connected_partners,
             'total_partners': total_partners
         },
         'today_metrics': {
@@ -418,14 +388,14 @@ def report_dashboard_view(request):
 def realtime_ivt_check_view(request):
     """
     GET /api/reports/ivt/realtime/
-    Optional params: child_network=<code>
+    Optional params: network=<code>
     Performs quick heuristics over latest data to flag potential IVT risks.
     """
-    child_code = request.query_params.get('child_network')
+    network = request.query_params.get('network')
 
     base = apply_publisher_filter(MasterMetaData.objects.filter(dimension_type='overview'), request.user)
-    if child_code:
-        base = base.filter(child_network_code=child_code)
+    if network:
+        base = base.filter(network_code=network)
 
     if not base.exists():
         return Response({'error': 'No data available for the requested scope'}, status=404)
@@ -475,8 +445,8 @@ def realtime_ivt_check_view(request):
             MasterMetaData.objects.filter(dimension_type=dim, date=d1),
             request.user
         )
-        if child_code:
-            dim_qs = dim_qs.filter(child_network_code=child_code)
+        if network:
+            dim_qs = dim_qs.filter(network_code=network)
         total_imp = dim_qs.aggregate(val=Coalesce(Sum('impressions'), 0))['val'] or 0
         if total_imp == 0:
             return 0.0
@@ -497,7 +467,7 @@ def realtime_ivt_check_view(request):
     risk_score = max(0, risk_score)
 
     return Response({
-        'scope': child_code or 'all',
+        'scope': network or 'all',
         'today': {
             'impressions': t_agg['impressions'],
             'clicks': t_agg['clicks'],
@@ -531,10 +501,6 @@ class ReportOverviewView(generics.ListAPIView):
         if date_from and date_to:
             queryset = queryset.filter(date__range=[date_from, date_to])
         
-        parent_network = request.query_params.get('parent_network')
-        if parent_network:
-            queryset = queryset.filter(parent_network_code=parent_network)
-        
         # Group by date and aggregate
         daily_data = queryset.values('date').annotate(
             total_revenue=Sum('revenue'),
@@ -543,8 +509,6 @@ class ReportOverviewView(generics.ListAPIView):
             total_ad_requests=Sum('total_ad_requests'),
             avg_ecpm=Avg('ecpm'),
             avg_ctr=Avg('ctr'),
-            network_count=Count('parent_network_code', distinct=True),
-            child_count=Count('child_network_code', distinct=True)
         ).order_by('-date')
         
         return Response({
@@ -578,13 +542,9 @@ class ReportDetailedView(generics.ListAPIView):
         if date_from and date_to:
             queryset = queryset.filter(date__range=[date_from, date_to])
         
-        parent_network = self.request.query_params.get('parent_network')
-        if parent_network:
-            queryset = queryset.filter(parent_network_code=parent_network)
-        
-        child_network = self.request.query_params.get('child_network')
-        if child_network:
-            queryset = queryset.filter(child_network_code=child_network)
+        network = self.request.query_params.get('network')
+        if network:
+            queryset = queryset.filter(network_code=network)
         
         return queryset.order_by('-date', 'dimension_value')
 
@@ -631,7 +591,7 @@ class ReportExportView(generics.GenericAPIView):
         
         # Write headers
         headers = [
-            'Date', 'Parent Network', 'Child Network Code', 'Child Network Name',
+            'Date', 'Network Code',
             'Dimension Type', 'Dimension Value', 'Partner Email',
             'Impressions', 'Revenue (USD)', 'eCPM', 'Clicks', 'CTR (%)',
             'Eligible Ad Requests', 'Total Ad Requests', 'Fill Rate (%)',
@@ -648,18 +608,17 @@ class ReportExportView(generics.GenericAPIView):
                     partner_email = partner.email
                 except User.DoesNotExist:
                     pass
-            elif record.child_network_code:
+            elif record.network_code:
                 try:
-                    partner = User.objects.get(network_id=record.child_network_code, role='publisher')
-                    partner_email = partner.email
-                except User.DoesNotExist:
+                    from accounts.models import GAMCredential
+                    cred = GAMCredential.objects.get(network_code=record.network_code, is_connected=True)
+                    partner_email = cred.partner_admin.email
+                except (GAMCredential.DoesNotExist, Exception):
                     pass
             
             writer.writerow([
                 record.date,
-                record.parent_network_code or '',
-                record.child_network_code,
-                record.parent_network_code or '',
+                record.network_code,
                 record.dimension_type,
                 record.dimension_value or '',
                 partner_email,
@@ -730,7 +689,7 @@ class UnifiedReportsQueryView(APIView):
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     def _build_base_queryset(self, user, data):
-        """Build base queryset with role-based access control for MCM and O&O"""
+        """Build base queryset with role-based access control."""
         queryset = MasterMetaData.objects.all()
         queryset = queryset.exclude(dimension_value__iexact='Total')
         queryset = apply_publisher_filter(queryset, user)
@@ -744,20 +703,13 @@ class UnifiedReportsQueryView(APIView):
         return queryset.filter(date__range=[date_from, date_to])
     
     def _apply_dynamic_filters(self, queryset, filters):
-        """Apply dynamic filters from the filters object.
-        child_network values match child_network_code in the DB:
-          MCM -> the publisher's GAM network ID
-          O&O -> the publisher's site domain
-        Additional filters: site (dimension_value for site dimension)
-        """
+        """Apply dynamic filters from the filters object."""
         for filter_key, filter_values in filters.items():
             if not filter_values:
                 continue
             
-            if filter_key == 'parent_network':
-                queryset = queryset.filter(parent_network_code__in=filter_values)
-            elif filter_key in ('publisher', 'child_network'):
-                queryset = queryset.filter(child_network_code__in=filter_values)
+            if filter_key in ('publisher', 'network'):
+                queryset = queryset.filter(network_code__in=filter_values)
             elif filter_key == 'dimension_type':
                 queryset = queryset.filter(dimension_type__in=filter_values)
             elif filter_key == 'site':
@@ -791,10 +743,7 @@ class UnifiedReportsQueryView(APIView):
                 'date': record.date,
                 'dimension_type': record.dimension_type,
                 'dimension_value': record.dimension_value,
-                'parent_network_name': record.parent_network_code,
-                'parent_network_code': record.parent_network_code,
-                'child_network_code': record.child_network_code,
-                'child_network_name': record.parent_network_code,
+                'network_code': record.network_code,
             }
             
             # Add requested metrics
@@ -851,9 +800,6 @@ class UnifiedReportsQueryView(APIView):
             avg_ctr=Avg('ctr'),
             # Note: viewability will be calculated separately excluding zero-impression accounts
             
-            # Counts
-            network_count=Count('parent_network_code', distinct=True),
-            child_count=Count('child_network_code', distinct=True)
         ).order_by('-date')
         
         # Format the response data with calculated metrics
@@ -1002,13 +948,11 @@ class UnifiedReportsQueryView(APIView):
             avg_ctr=Avg('ctr')
         )
         
-        # Breakdown by network
         network_breakdown = queryset.values(
-            'parent_network_code'
+            'publisher_id'
         ).annotate(
             total_revenue=Sum('revenue'),
             total_impressions=Sum('impressions'),
-            child_count=Count('child_network_code', distinct=True)
         ).order_by('-total_revenue')
         
         # Breakdown by dimension
@@ -1044,8 +988,8 @@ class UnifiedReportsQueryView(APIView):
         
         # Write headers
         headers = [
-            'Date', 'Parent Network', 'Child Network Code', 'Child Network Name',
-            'Dimension Type', 'Dimension Value', 'Partner ID'
+            'Date', 'Network Code',
+            'Dimension Type', 'Dimension Value'
         ]
         
         # Add metric headers based on requested metrics
@@ -1073,12 +1017,9 @@ class UnifiedReportsQueryView(APIView):
         for record in queryset:
             row = [
                 record.date,
-                record.parent_network_code or '',
-                record.child_network_code,
-                record.parent_network_code or '',
+                record.network_code,
                 record.dimension_type,
                 record.dimension_value or '',
-                record.parent_network_code or ''
             ]
             
             # Add metric values
@@ -1268,7 +1209,7 @@ class GenerateMonthlyEarningsView(APIView):
         else:
             next_month = month_date.replace(month=month_date.month + 1, day=1)
 
-        publishers = User.objects.filter(role=User.UserRole.PUBLISHER)
+        publishers = User.objects.filter(role=User.UserRole.PARTNER_ADMIN)
 
         created_count = 0
         updated_count = 0
@@ -1280,14 +1221,7 @@ class GenerateMonthlyEarningsView(APIView):
                 date__lt=next_month,
             )
 
-            gam_type = getattr(pub, 'gam_type', 'mcm') or 'mcm'
-            if gam_type == 'o_and_o':
-                qs = qs.filter(publisher_id=pub.id)
-            else:
-                if pub.network_id:
-                    qs = qs.filter(child_network_code=pub.network_id)
-                else:
-                    continue
+            qs = qs.filter(publisher_id=pub.id)
 
             agg = qs.aggregate(
                 gross=Coalesce(Sum('revenue'), Decimal('0')),
@@ -1355,4 +1289,179 @@ class BulkUpdateEarningsView(APIView):
             'success': True,
             'updated': updated,
         }, status=status.HTTP_200_OK)
+
+
+# =============================================================================
+# SUB-PUBLISHER EARNINGS VIEWS
+# =============================================================================
+
+from .models import SubPublisherEarning
+from .earnings_service import SubPublisherEarningsService
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def sub_publisher_earnings_view(request):
+    """
+    GET — earnings list for a sub-publisher.
+    Sub-publishers see only their own data.
+    Partner-admins see their children. Admins see all.
+    Query params: date_from, date_to, sub_publisher_id (admin/partner only).
+    """
+    user = request.user
+    date_from = request.query_params.get('date_from')
+    date_to = request.query_params.get('date_to')
+
+    qs = SubPublisherEarning.objects.select_related('sub_publisher', 'partner_admin')
+
+    if user.role == 'sub_publisher':
+        qs = qs.filter(sub_publisher=user)
+    elif user.role == 'partner_admin':
+        target_id = request.query_params.get('sub_publisher_id')
+        if target_id:
+            qs = qs.filter(sub_publisher_id=target_id, partner_admin=user)
+        else:
+            qs = qs.filter(partner_admin=user)
+    elif user.role == 'admin':
+        target_id = request.query_params.get('sub_publisher_id')
+        if target_id:
+            qs = qs.filter(sub_publisher_id=target_id)
+    else:
+        return Response({'error': 'Permission denied.'}, status=status.HTTP_403_FORBIDDEN)
+
+    if date_from:
+        qs = qs.filter(date__gte=date_from)
+    if date_to:
+        qs = qs.filter(date__lte=date_to)
+
+    qs = qs.order_by('-date')
+
+    data = []
+    for e in qs[:500]:
+        data.append({
+            'id': e.id,
+            'date': e.date.isoformat(),
+            'sub_publisher_id': e.sub_publisher_id,
+            'sub_publisher_email': e.sub_publisher.email,
+            'sub_publisher_name': e.sub_publisher.get_full_name(),
+            'partner_admin_id': e.partner_admin_id,
+            'gross_revenue': str(e.gross_revenue),
+            'fee_percentage': str(e.fee_percentage),
+            'fee_amount': str(e.fee_amount),
+            'net_revenue': str(e.net_revenue),
+            'impressions': e.impressions,
+            'clicks': e.clicks,
+            'ecpm': str(e.ecpm),
+            'source_dimension_type': e.source_dimension_type,
+            'source_dimension_value': e.source_dimension_value,
+        })
+
+    return Response(data)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def calculate_sub_publisher_earnings_view(request):
+    """
+    Trigger sub-publisher earnings calculation.
+    Admin/partner_admin can trigger for all or specific sub-publisher.
+    """
+    user = request.user
+    if user.role not in ('admin', 'partner_admin'):
+        return Response({'error': 'Permission denied.'}, status=status.HTTP_403_FORBIDDEN)
+
+    date_from = request.data.get('date_from')
+    date_to = request.data.get('date_to')
+    sub_publisher_id = request.data.get('sub_publisher_id')
+
+    from datetime import datetime
+    if date_from:
+        date_from = datetime.strptime(date_from, '%Y-%m-%d').date()
+    if date_to:
+        date_to = datetime.strptime(date_to, '%Y-%m-%d').date()
+
+    if sub_publisher_id:
+        result = SubPublisherEarningsService.calculate_for_sub_publisher(
+            sub_publisher_id, date_from, date_to
+        )
+    else:
+        result = SubPublisherEarningsService.calculate_all(date_from, date_to)
+
+    return Response({'success': True, **result})
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def partner_rollup_view(request):
+    """
+    Aggregated rollup view for partner-admins.
+    Shows per-sub-publisher totals within a date range.
+    """
+    user = request.user
+    if user.role not in ('admin', 'partner_admin'):
+        return Response({'error': 'Permission denied.'}, status=status.HTTP_403_FORBIDDEN)
+
+    date_from = request.query_params.get('date_from')
+    date_to = request.query_params.get('date_to')
+
+    qs = SubPublisherEarning.objects.select_related('sub_publisher')
+    if user.role == 'partner_admin':
+        qs = qs.filter(partner_admin=user)
+
+    if date_from:
+        qs = qs.filter(date__gte=date_from)
+    if date_to:
+        qs = qs.filter(date__lte=date_to)
+
+    from django.db.models import Sum, Count, F
+    rollup = (
+        qs
+        .values(
+            'sub_publisher__id',
+            'sub_publisher__email',
+            'sub_publisher__first_name',
+            'sub_publisher__last_name',
+            'sub_publisher__company_name',
+            'sub_publisher__custom_fee_percentage',
+        )
+        .annotate(
+            total_gross=Sum('gross_revenue'),
+            total_fee=Sum('fee_amount'),
+            total_net=Sum('net_revenue'),
+            total_impressions=Sum('impressions'),
+            total_clicks=Sum('clicks'),
+            days_count=Count('date', distinct=True),
+        )
+        .order_by('-total_gross')
+    )
+
+    data = []
+    for r in rollup:
+        data.append({
+            'sub_publisher_id': r['sub_publisher__id'],
+            'email': r['sub_publisher__email'],
+            'name': f"{r['sub_publisher__first_name']} {r['sub_publisher__last_name']}".strip(),
+            'company': r['sub_publisher__company_name'],
+            'fee_percentage': str(r['sub_publisher__custom_fee_percentage']),
+            'total_gross': str(r['total_gross'] or 0),
+            'total_fee': str(r['total_fee'] or 0),
+            'total_net': str(r['total_net'] or 0),
+            'total_impressions': r['total_impressions'] or 0,
+            'total_clicks': r['total_clicks'] or 0,
+            'days_count': r['days_count'],
+        })
+
+    total_gross = sum(float(d['total_gross']) for d in data)
+    total_fee = sum(float(d['total_fee']) for d in data)
+    total_net = sum(float(d['total_net']) for d in data)
+
+    return Response({
+        'sub_publishers': data,
+        'totals': {
+            'gross': str(round(total_gross, 2)),
+            'fee': str(round(total_fee, 2)),
+            'net': str(round(total_net, 2)),
+            'sub_publisher_count': len(data),
+        },
+    })
 

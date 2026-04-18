@@ -103,34 +103,21 @@ class Command(BaseCommand):
             raise CommandError(f'Report fetch failed: {e}')
 
     def _process_all_parallel(self, date_from, date_to, max_workers, network_id=None):
-        from accounts.models import User
-        from core.models import StatusChoices
-        from itertools import chain
+        from accounts.models import GAMCredential
 
-        mcm_qs = User.objects.filter(
-            role=User.UserRole.PUBLISHER,
-            status=StatusChoices.ACTIVE,
-            gam_type='mcm',
-            network_id__isnull=False,
-        ).exclude(network_id='')
-
-        oo_qs = User.objects.filter(
-            role=User.UserRole.PUBLISHER,
-            status=StatusChoices.ACTIVE,
-            gam_type='o_and_o',
-            site_url__isnull=False,
-        ).exclude(site_url='')
+        cred_qs = GAMCredential.objects.filter(
+            is_connected=True,
+            partner_admin__status='active',
+        ).select_related('partner_admin')
 
         if network_id:
-            mcm_qs = mcm_qs.filter(network_id=network_id)
-            oo_qs = oo_qs.none()
+            cred_qs = cred_qs.filter(network_code=network_id)
 
-        publisher_list = list(chain(mcm_qs, oo_qs))
-        num_accounts = len(publisher_list)
+        cred_list = list(cred_qs)
+        num_accounts = len(cred_list)
 
         self.stdout.write(self.style.SUCCESS(
-            f'Found {num_accounts} eligible accounts | '
-            f'MCM: {mcm_qs.count()} | O&O: {oo_qs.count()}'
+            f'Found {num_accounts} connected partner GAM accounts'
         ))
 
         if num_accounts == 0:
@@ -162,20 +149,20 @@ class Command(BaseCommand):
         with concurrent.futures.ThreadPoolExecutor(max_workers=actual_workers) as executor:
             future_map = {}
             for single_date in dates:
-                for pub in publisher_list:
+                for cred in cred_list:
                     future = executor.submit(
-                        self._process_single_account, pub, single_date, single_date
+                        self._process_single_account, cred, single_date, single_date
                     )
-                    future_map[future] = (pub, single_date)
+                    future_map[future] = (cred, single_date)
 
             for future in concurrent.futures.as_completed(future_map):
-                publisher, task_date = future_map[future]
+                cred_item, task_date = future_map[future]
                 try:
                     result = future.result()
                     result['date'] = str(task_date)
                     all_results.append(result)
                 except Exception as e:
-                    label = publisher.network_id or publisher.site_url or publisher.email
+                    label = cred_item.network_code or cred_item.partner_admin.email
                     self.stdout.write(self.style.ERROR(f'{label} [{task_date}]: {e}'))
                     all_results.append({
                         'account': label, 'date': str(task_date),
@@ -248,12 +235,14 @@ class Command(BaseCommand):
             'total_records_updated': 0,
         }
 
-    def _process_single_account(self, publisher, date_from, date_to):
-        account_code = publisher.network_id or publisher.site_url or publisher.email
+    def _process_single_account(self, cred, date_from, date_to):
+        account_code = cred.network_code or cred.partner_admin.email
 
         for attempt in range(MAX_QUOTA_RETRIES):
             try:
-                result = GAMReportService._process_publisher_network(publisher, date_from, date_to)
+                result = GAMReportService._process_partner_network(
+                    cred.partner_admin, cred, date_from, date_to
+                )
                 return {
                     'account': account_code,
                     'success': True,

@@ -19,7 +19,6 @@ def api_root(request):
         'endpoints': {
             'authentication': '/api/auth/',
             'reports': '/api/reports/',
-            'tracking': '/api/reports/tracking/',
             'admin_panel': '/admin/',
             'api_docs': '/api/docs/' if django_settings.DEBUG else None,
         },
@@ -27,7 +26,6 @@ def api_root(request):
             'type': 'JWT Bearer Token',
             'header': 'Authorization: Bearer <token>',
             'login_endpoint': '/api/auth/login/',
-            'register_endpoint': '/api/auth/register/',
         }
     })
 

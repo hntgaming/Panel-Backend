@@ -1,9 +1,12 @@
 # reports/services.py - High-Performance GAM Report Fetcher
 #
-# Optimizations applied from GAM-Sentinel architecture:
+# Each partner admin connects their own GAM account via GAMCredential.
+# Reports are fetched directly from the partner's GAM network.
+#
+# Optimizations:
 #   1. Parallel dimension processing per account (ThreadPoolExecutor)
 #   2. Bulk DB writes (bulk_create + bulk_update) instead of per-record update_or_create
-#   3. GAM client caching (shared across publishers of the same GAM type)
+#   3. GAM client caching per partner
 #   4. Metric fallback (retry without TOTAL_AD_REQUESTS on unsupported dimensions)
 #   5. Bypasses model.full_clean() during bulk inserts for speed
 
@@ -29,6 +32,15 @@ from .gam_client import GAMClientService
 from accounts.models import User
 from .models import MasterMetaData, ReportSyncLog
 from .constants import dimension_map, metrics, dimension_metrics
+
+_GAMCredential = None  # lazy import to avoid circular imports
+
+def _get_gam_credential_model():
+    global _GAMCredential
+    if _GAMCredential is None:
+        from accounts.models import GAMCredential
+        _GAMCredential = GAMCredential
+    return _GAMCredential
 
 logger = logging.getLogger(__name__)
 
@@ -109,65 +121,6 @@ def _quantize(value: Decimal, places: int) -> Decimal:
         return Decimal('0').quantize(q, rounding=ROUND_HALF_UP)
 
 
-def _aggregate_oo_records(records):
-    """
-    For O&O publishers, SITE_NAME is added as an extra dimension to all reports.
-    GAM then breaks down rows per subdomain (e.g. ldr.virviral.xyz,
-    nya.virviral.xyz), creating duplicate dimension_value keys like "Chrome"
-    appearing multiple times. This function sums the additive metrics
-    (impressions, revenue, clicks, ad_requests) and recalculates the derived
-    ones (eCPM, CTR, fill_rate, viewability) from the aggregated totals.
-    """
-    if not records:
-        return records
-
-    from collections import defaultdict
-    buckets = defaultdict(lambda: {
-        'impressions': 0,
-        'revenue': Decimal('0'),
-        'clicks': 0,
-        'total_ad_requests': 0,
-        'viewable_weighted': Decimal('0'),
-    })
-
-    templates = {}
-
-    for r in records:
-        key = (r['child_network_code'], r['date'], r['dimension_type'], r['dimension_value'])
-        b = buckets[key]
-        imp = r['impressions']
-        b['impressions'] += imp
-        b['revenue'] += r['revenue']
-        b['clicks'] += r['clicks']
-        b['total_ad_requests'] += r['total_ad_requests']
-        b['viewable_weighted'] += r['viewable_impressions_rate'] * imp
-        if key not in templates:
-            templates[key] = r
-
-    aggregated = []
-    for key, b in buckets.items():
-        tmpl = dict(templates[key])
-        imp = b['impressions']
-        rev = b['revenue']
-        clicks = b['clicks']
-        ad_req = b['total_ad_requests']
-
-        ecpm = (rev / imp * 1000) if imp > 0 else Decimal('0')
-        ctr = (Decimal(clicks) / Decimal(imp) * 100) if imp > 0 else Decimal('0')
-        view_rate = (b['viewable_weighted'] / imp) if imp > 0 else Decimal('0')
-
-        tmpl['impressions'] = imp
-        tmpl['revenue'] = _quantize(rev, 2)
-        tmpl['clicks'] = clicks
-        tmpl['total_ad_requests'] = ad_req
-        tmpl['ecpm'] = _quantize(ecpm, 2)
-        tmpl['ctr'] = _quantize(ctr, 2)
-        tmpl['viewable_impressions_rate'] = _quantize(view_rate, 2)
-        aggregated.append(tmpl)
-
-    return aggregated
-
-
 class GAMReportService:
     """
     High-performance service for fetching GAM reports.
@@ -201,47 +154,46 @@ class GAMReportService:
         logger.info(f"Starting GAM report sync {sync_id} for {date_from} to {date_to}")
 
         try:
-            from core.models import StatusChoices
-            from itertools import chain
+            GAMCredential = _get_gam_credential_model()
 
-            mcm_publishers = User.objects.filter(
-                role=User.UserRole.PUBLISHER,
-                status=StatusChoices.ACTIVE,
-                gam_type='mcm',
-                network_id__isnull=False,
-            ).exclude(network_id='')
-
-            oo_publishers = User.objects.filter(
-                role=User.UserRole.PUBLISHER,
-                status=StatusChoices.ACTIVE,
-                gam_type='o_and_o',
-            ).filter(
-                Q(site_url__isnull=False) & ~Q(site_url='') | Q(sites__isnull=False)
-            ).distinct()
-
-            eligible_publishers = list(chain(mcm_publishers, oo_publishers))
+            credentials = (
+                GAMCredential.objects
+                .filter(is_connected=True, partner_admin__status='active')
+                .select_related('partner_admin')
+            )
 
             successful_count = 0
             failed_count = 0
             total_records_created = 0
             total_records_updated = 0
 
-            for publisher in eligible_publishers:
+            for cred in credentials:
+                partner = cred.partner_admin
                 try:
-                    result = GAMReportService._process_publisher_network(
-                        publisher, date_from, date_to
+                    result = GAMReportService._process_partner_network(
+                        partner, cred, date_from, date_to
                     )
                     successful_count += 1
                     total_records_created += result.get('records_created', 0)
                     total_records_updated += result.get('records_updated', 0)
                 except Exception as e:
                     failed_count += 1
-                    label = publisher.network_id or publisher.site_url or publisher.email
-                    logger.error(f"Failed to process publisher {label}: {e}")
-                    sync_log.add_network_error(label or 'unknown', str(e))
+                    label = cred.network_code or partner.email
+                    logger.error(f"Failed to process partner {label}: {e}")
+                    sync_log.add_network_error(label, str(e))
+
+                    cred.connection_error = str(e)[:500]
+                    cred.save(update_fields=['connection_error'])
 
             sync_log.mark_completed(successful_count, failed_count, total_records_created, total_records_updated)
             logger.info(f"Sync {sync_id} completed: {successful_count} success, {failed_count} failed")
+
+            try:
+                from .earnings_service import SubPublisherEarningsService
+                spe_result = SubPublisherEarningsService.calculate_all(date_from, date_to)
+                logger.info(f"Post-sync sub-publisher earnings: {spe_result}")
+            except Exception as e:
+                logger.error(f"Sub-publisher earnings calculation failed: {e}")
 
             return {
                 'success': True,
@@ -261,103 +213,33 @@ class GAMReportService:
             return {'success': False, 'sync_id': sync_id, 'error': str(e)}
 
     # ------------------------------------------------------------------
-    # Publisher routing
+    # Per-partner network processing (new unified path)
     # ------------------------------------------------------------------
     @staticmethod
-    def _process_publisher_network(publisher, date_from, date_to):
-        gam_type = getattr(publisher, 'gam_type', 'mcm') or 'mcm'
-        if gam_type == 'o_and_o':
-            return GAMReportService._process_oo_publisher(publisher, date_from, date_to)
-        return GAMReportService._process_mcm_publisher(publisher, date_from, date_to)
-
-    # ------------------------------------------------------------------
-    # MCM publisher
-    # ------------------------------------------------------------------
-    @staticmethod
-    def _process_mcm_publisher(publisher, date_from, date_to):
-        child_network_code = publisher.network_id
-        from decouple import config as decouple_config
-        yaml_network_code = decouple_config('GAM_PARENT_NETWORK_CODE', default='23310681755')
-
+    def _process_partner_network(partner, cred, date_from, date_to):
+        """Fetch all dimensions for a partner's entire GAM network."""
         try:
-            client = GAMClientService.get_googleads_client(yaml_network_code, gam_type='mcm')
+            client = GAMClientService.get_client_for_partner(partner)
         except Exception as e:
             if _is_auth_error(str(e)):
                 return {'records_created': 0, 'records_updated': 0, 'status': 'skipped'}
             raise
 
-        class _Invitation:
+        class _PartnerContext:
             def __init__(self):
-                self.child_network_code = child_network_code
-                self.delegation_type = 'MANAGE_INVENTORY'
-                self.gam_type = 'mcm'
-                self.parent_network = type('P', (), {'network_code': yaml_network_code, 'network_name': 'Parent Network'})()
-                self.publisher_name = publisher.company_name or publisher.email
-                self.publisher_id = publisher.id
+                self.network_code = cred.network_code
+                self.publisher_name = partner.company_name or partner.email
+                self.publisher_id = partner.id
 
-        return GAMReportService._fetch_all_dimensions_parallel(
-            client, _Invitation(), date_from, date_to
+        result = GAMReportService._fetch_all_dimensions_parallel(
+            client, _PartnerContext(), date_from, date_to
         )
 
-    # ------------------------------------------------------------------
-    # O&O publisher
-    # ------------------------------------------------------------------
-    @staticmethod
-    def _process_oo_publisher(publisher, date_from, date_to):
-        from urllib.parse import urlparse
-        from decouple import config as decouple_config
-        from accounts.models import Site
+        cred.last_synced_at = timezone.now()
+        cred.connection_error = ''
+        cred.save(update_fields=['last_synced_at', 'connection_error'])
 
-        oo_network_code = decouple_config('GAM_OO_NETWORK_CODE', default='23341212234')
-
-        try:
-            client = GAMClientService.get_googleads_client(oo_network_code, gam_type='o_and_o')
-        except Exception as e:
-            if _is_auth_error(str(e)):
-                return {'records_created': 0, 'records_updated': 0, 'status': 'skipped'}
-            raise
-
-        def _url_to_domain(url):
-            parsed = urlparse(url) if '://' in url else urlparse(f'https://{url}')
-            d = parsed.netloc or parsed.path.split('/')[0]
-            if d.startswith('www.'):
-                d = d[4:]
-            return d.rstrip('/').split(':')[0]
-
-        site_urls = list(
-            Site.objects.filter(publisher=publisher)
-            .values_list('url', flat=True)
-        )
-        if not site_urls and publisher.site_url:
-            site_urls = [publisher.site_url]
-        if not site_urls:
-            return {'records_created': 0, 'records_updated': 0, 'status': 'skipped'}
-
-        total_created = 0
-        total_updated = 0
-
-        for url in site_urls:
-            domain = _url_to_domain(url)
-            if not domain:
-                continue
-
-            class _OOInvitation:
-                def __init__(self, _domain):
-                    self.child_network_code = _domain
-                    self.delegation_type = 'OWNED_AND_OPERATED'
-                    self.gam_type = 'o_and_o'
-                    self.site_domain = _domain
-                    self.parent_network = type('P', (), {'network_code': oo_network_code, 'network_name': 'O&O Network'})()
-                    self.publisher_name = publisher.company_name or publisher.email
-                    self.publisher_id = publisher.id
-
-            result = GAMReportService._fetch_all_dimensions_parallel(
-                client, _OOInvitation(domain), date_from, date_to
-            )
-            total_created += result.get('records_created', 0)
-            total_updated += result.get('records_updated', 0)
-
-        return {'records_created': total_created, 'records_updated': total_updated}
+        return result
 
     # ------------------------------------------------------------------
     # CORE OPTIMIZATION: Parallel dimension fetching
@@ -408,7 +290,7 @@ class GAMReportService:
                     if _is_auth_error(str(e)):
                         auth_failed = True
                         break
-                    logger.warning(f"Dimension {dk} ({td}) failed for {invitation.child_network_code}: {e}")
+                    logger.warning(f"Dimension {dk} ({td}) failed for {invitation.network_code}: {e}")
 
         if auth_failed:
             return {'records_created': 0, 'records_updated': 0, 'status': 'auth_error'}
@@ -457,26 +339,6 @@ class GAMReportService:
         Execute a single GAM report query, download gzipped CSV, parse rows.
         """
         dimensions = list(GAMReportService.DIMENSION_MAP.get(dimension_key, []))
-        filter_statement = None
-
-        is_oo = (
-            getattr(invitation, 'gam_type', None) == 'o_and_o'
-            or invitation.delegation_type == 'OWNED_AND_OPERATED'
-        )
-
-        if is_oo:
-            if "SITE_NAME" not in dimensions:
-                dimensions.append("SITE_NAME")
-        elif invitation.delegation_type == 'MANAGE_INVENTORY':
-            if "CHILD_NETWORK_CODE" not in dimensions:
-                dimensions.append("CHILD_NETWORK_CODE")
-            filter_statement = {
-                'query': 'WHERE CHILD_NETWORK_CODE = :childNetworkCode',
-                'values': [{
-                    'key': 'childNetworkCode',
-                    'value': {'xsi_type': 'TextValue', 'value': str(invitation.child_network_code)},
-                }],
-            }
 
         report_query = {
             "dimensions": dimensions,
@@ -488,8 +350,6 @@ class GAMReportService:
         }
         if "AD_UNIT_NAME" in dimensions:
             report_query["adUnitView"] = "FLAT"
-        if filter_statement:
-            report_query["statement"] = filter_statement
 
         report_job = {"reportQuery": report_query}
 
@@ -548,18 +408,7 @@ class GAMReportService:
     # ------------------------------------------------------------------
     @staticmethod
     def _process_report_rows(headers, data_rows, invitation, dimension_key, date_from):
-        from decouple import config as decouple_config
-
-        is_oo = (
-            getattr(invitation, 'gam_type', None) == 'o_and_o'
-            or invitation.delegation_type == 'OWNED_AND_OPERATED'
-        )
-        oo_domain = getattr(invitation, 'site_domain', '').lower().strip() if is_oo else ''
-
-        if is_oo:
-            parent_network_code = decouple_config('GAM_OO_NETWORK_CODE', default='23341212234')
-        else:
-            parent_network_code = decouple_config('GAM_PARENT_NETWORK_CODE', default='23310681755')
+        network_code = invitation.network_code
 
         skip_dims = (
             'SITE_NAME', 'AD_UNIT_NAME', 'MOBILE_APP_NAME',
@@ -583,11 +432,6 @@ class GAMReportService:
                             break
                 if skip:
                     continue
-
-                if is_oo and oo_domain:
-                    row_site = str(row.get('SITE_NAME', '')).lower().strip()
-                    if not row_site or oo_domain not in row_site:
-                        continue
 
                 if dim_cols:
                     dimension_value = " | ".join(str(row.get(c, 'All')) for c in dim_cols)
@@ -622,9 +466,8 @@ class GAMReportService:
                 )
 
                 records.append({
-                    'parent_network_code': parent_network_code,
                     'publisher_id': getattr(invitation, 'publisher_id', None),
-                    'child_network_code': invitation.child_network_code,
+                    'network_code': network_code,
                     'dimension_type': dimension_key,
                     'dimension_value': dimension_value,
                     'date': date_from,
@@ -640,9 +483,6 @@ class GAMReportService:
             except Exception as e:
                 logger.warning(f"Row processing error: {e}")
                 continue
-
-        if is_oo and dimension_key != 'site':
-            records = _aggregate_oo_records(records)
 
         return records
 
@@ -662,9 +502,9 @@ class GAMReportService:
         created = 0
         updated = 0
 
-        unique_fields = ['child_network_code', 'date', 'dimension_type', 'dimension_value']
+        unique_fields = ['network_code', 'date', 'dimension_type', 'dimension_value']
         update_fields = [
-            'parent_network_code', 'publisher_id', 'currency',
+            'publisher_id', 'currency',
             'impressions', 'revenue', 'ecpm', 'clicks', 'ctr',
             'total_ad_requests', 'viewable_impressions_rate',
         ]
@@ -673,9 +513,8 @@ class GAMReportService:
             batch = records_data[i:i + BATCH_SIZE]
             objs = [
                 MasterMetaData(
-                    parent_network_code=r['parent_network_code'],
                     publisher_id=r.get('publisher_id'),
-                    child_network_code=r['child_network_code'],
+                    network_code=r['network_code'],
                     dimension_type=r['dimension_type'],
                     dimension_value=r['dimension_value'],
                     date=r['date'],
@@ -719,64 +558,7 @@ class GAMReportService:
 
         return created, updated
 
-    # ------------------------------------------------------------------
-    # Legacy compatibility: _process_child_network (used nowhere now but kept for safety)
-    # ------------------------------------------------------------------
-    @staticmethod
-    def _process_child_network(invitation, date_from, date_to):
-        child_network_code = invitation.child_network_code
-        try:
-            client = GAMClientService.get_googleads_client(child_network_code, gam_type='mcm')
-        except Exception as e:
-            if _is_auth_error(str(e)):
-                return {'records_created': 0, 'records_updated': 0, 'skipped_due_to_auth_error': True}
-            raise
-
-        return GAMReportService._fetch_all_dimensions_parallel(client, invitation, date_from, date_to)
-
-    @staticmethod
-    def _get_child_network_client(child_network_code, gam_type='mcm'):
-        return GAMClientService.get_googleads_client(child_network_code, gam_type=gam_type)
-
-    # ------------------------------------------------------------------
-    # Kept for backward compatibility with bulk_create_or_update_records calls
-    # ------------------------------------------------------------------
     @staticmethod
     def bulk_create_or_update_records(records_data):
         created, updated = GAMReportService._bulk_upsert_records(records_data)
         return {'created': created, 'updated': updated}
-
-    @staticmethod
-    def _store_report_data(data):
-        try:
-            lookup = {
-                'child_network_code': data['child_network_code'],
-                'dimension_type': data['dimension_type'],
-                'date': data['date'],
-            }
-            if data['dimension_type'] != 'overview':
-                lookup['dimension_value'] = data['dimension_value']
-            lookup['parent_network_code'] = data['parent_network_code']
-
-            defaults = {
-                'publisher_id': data.get('publisher_id'),
-                'dimension_value': data.get('dimension_value'),
-                'currency': data['currency'],
-                'impressions': data['impressions'],
-                'revenue': data['revenue'],
-                'ecpm': data['ecpm'],
-                'clicks': data['clicks'],
-                'ctr': data['ctr'],
-                'total_ad_requests': data.get('total_ad_requests', 0),
-                'eligible_ad_requests': data.get('eligible_ad_requests', 0),
-                'viewable_impressions_rate': data['viewable_impressions_rate'],
-            }
-            _, was_created = MasterMetaData.objects.update_or_create(**lookup, defaults=defaults)
-            return {'created': 1 if was_created else 0, 'updated': 0 if was_created else 1}
-        except Exception as e:
-            logger.error(f"Failed to store report data: {e}")
-            return None
-
-    # Kept for any external callers
-    _fetch_child_dimension_reports = None  # Removed; use _fetch_single_dimension
-    _process_report_data = None  # Removed; use _process_report_rows

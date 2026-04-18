@@ -3,22 +3,20 @@ User management models - Updated for GAM Platform
 """
 from django.contrib.auth.models import AbstractUser
 from django.db import models
+from django.conf import settings
 from core.models import TimeStampedModel, StatusChoices
-# Removed gam_accounts dependencies
 
 class User(AbstractUser, TimeStampedModel):
     """
     Custom User model for GAM Platform
-    Enhanced with role-based access control
+    Supports: Admin, Partner-Admin (publishers who connect GAM & manage sub-publishers),
+    Sub-Publisher (creators/traffic partners under a partner-admin)
     """
     
     class UserRole(models.TextChoices):
         ADMIN = 'admin', 'Admin User'
-        PUBLISHER = 'publisher', 'Publisher User'
-    
-    class GamType(models.TextChoices):
-        MCM = 'mcm', 'MCM (Child Network)'
-        O_AND_O = 'o_and_o', 'Owned & Operated'
+        PARTNER_ADMIN = 'partner_admin', 'Partner Admin'
+        SUB_PUBLISHER = 'sub_publisher', 'Sub-Publisher (Creator/Traffic Partner)'
     
     # Basic user information
     email = models.EmailField(unique=True)
@@ -29,8 +27,19 @@ class User(AbstractUser, TimeStampedModel):
     role = models.CharField(
         max_length=20,
         choices=UserRole.choices,
-        default=UserRole.PUBLISHER,
-        help_text="Admin: Full access. Publisher: Permission-based."
+        default=UserRole.PARTNER_ADMIN,
+        help_text="Admin: Full access. Partner-Admin: Connects GAM & manages sub-publishers. Sub-Publisher: Creator/traffic partner."
+    )
+    
+    # Hierarchy: sub-publishers belong to a partner-admin
+    parent_publisher = models.ForeignKey(
+        'self',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='sub_publishers',
+        limit_choices_to={'role__in': ['partner_admin', 'admin']},
+        help_text="Partner-Admin who manages this sub-publisher"
     )
     
     # User status
@@ -53,7 +62,7 @@ class User(AbstractUser, TimeStampedModel):
     last_login_ip = models.GenericIPAddressField(null=True, blank=True)
     password_changed_at = models.DateTimeField(null=True, blank=True)
     
-    # Revenue sharing
+    # Revenue sharing (parent network share percentage)
     revenue_share_percentage = models.DecimalField(
         max_digits=5, 
         decimal_places=2, 
@@ -61,17 +70,16 @@ class User(AbstractUser, TimeStampedModel):
         help_text="Percentage of revenue that goes to the parent network (0-100%)"
     )
     
-    # GAM type - determines which GAM account and report filtering strategy to use
-    gam_type = models.CharField(
-        max_length=20,
-        choices=GamType.choices,
-        default=GamType.MCM,
-        help_text="MCM: reports filtered by child network ID. O&O: reports filtered by site URL."
+    # Custom fee for each partner/sub-publisher (deducted from their earnings)
+    custom_fee_percentage = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=0.00,
+        help_text="Custom fee percentage assigned by partner-admin to this sub-publisher (0-100%)"
     )
     
     # Publisher website information
     site_url = models.URLField(blank=True, help_text="Publisher's website URL")
-    network_id = models.CharField(max_length=50, blank=True, help_text="Publisher's GAM network ID (required for MCM, unused for O&O)")
     
     # RBAC versioning for cache invalidation
     permissions_version = models.IntegerField(default=1, help_text="Version number for permission cache invalidation")
@@ -84,41 +92,44 @@ class User(AbstractUser, TimeStampedModel):
         db_table = 'accounts_user'
         verbose_name = 'User'
         verbose_name_plural = 'Users'
+        indexes = [
+            models.Index(fields=['parent_publisher', 'role']),
+            models.Index(fields=['role', 'status']),
+        ]
     
     def __str__(self):
         return f"{self.email} ({self.get_full_name()})"
     
     def get_full_name(self):
-        """Return the full name of the user"""
         return f"{self.first_name} {self.last_name}".strip()
     
     def get_sites(self):
-        """Get all sites for this publisher"""
         return self.sites.all()
+    
+    def get_sub_publishers(self):
+        return User.objects.filter(parent_publisher=self, role=self.UserRole.SUB_PUBLISHER)
     
     @property
     def is_active_user(self):
-        """Check if user is active"""
         return self.status == StatusChoices.ACTIVE and self.is_active
     
     @property
     def is_admin_user(self):
-        """Check if user is admin"""
         return self.role.upper() == 'ADMIN'
     
     @property
-    def is_publisher_user(self):
-        """Check if user is publisher"""
-        return self.role.upper() == 'PUBLISHER'
+    def is_partner_admin(self):
+        return self.role == self.UserRole.PARTNER_ADMIN
+    
+    @property
+    def is_sub_publisher(self):
+        return self.role == self.UserRole.SUB_PUBLISHER
     
     def save(self, *args, **kwargs):
-        """Override save to handle role-based staff status"""
-        # Admin users should be staff to access Django admin
         if self.role == self.UserRole.ADMIN:
             self.is_staff = True
-        elif self.role == self.UserRole.PUBLISHER:
+        else:
             self.is_staff = False
-        
         super().save(*args, **kwargs)
 
 
@@ -169,8 +180,8 @@ class RolePermission(TimeStampedModel):
     """
     ROLE_CHOICES = [
         ('ADMIN', 'Admin User'),
-        ('PARENT', 'Parent Network User'),
-        ('PUBLISHER', 'Publisher User'),
+        ('PARTNER_ADMIN', 'Partner Admin'),
+        ('SUB_PUBLISHER', 'Sub-Publisher'),
     ]
     
     role = models.CharField(
@@ -239,81 +250,6 @@ class UserPermissionOverride(TimeStampedModel):
         return f"{self.user.email} -> {action} {self.permission.key}"
 
 
-class PublisherAccountAccess(TimeStampedModel):
-    """
-    Publisher to Account assignments for managed inventory
-    """
-    publisher = models.ForeignKey(
-        User,
-        on_delete=models.CASCADE,
-        related_name='assigned_accounts',
-        limit_choices_to={'role': 'PUBLISHER'},
-        null=True,
-        blank=True
-    )
-    # Removed MCM invitation dependency - simplified for managed inventory
-    child_network_code = models.CharField(
-        max_length=20,
-        default='',
-        help_text="Child network code for managed inventory"
-    )
-    granted_by = models.ForeignKey(
-        User,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='granted_account_access',
-        help_text="Admin who granted this access"
-    )
-    notes = models.TextField(
-        blank=True,
-        help_text="Notes about this assignment"
-    )
-    
-    class Meta:
-        db_table = 'rbac_publisher_account_access'
-        unique_together = ['publisher', 'child_network_code']
-        ordering = ['publisher__email', 'child_network_code']
-    
-    def __str__(self):
-        return f"{self.publisher.email} -> {self.child_network_code}"
-
-
-class ParentNetwork(TimeStampedModel):
-    """
-    Parent network assignments for PARENT users
-    """
-    user = models.OneToOneField(
-        User,
-        on_delete=models.CASCADE,
-        related_name='parent_network_assignment',
-        limit_choices_to={'role': 'PARENT'},
-        null=True,
-        blank=True
-    )
-    # Removed parent network dependency - simplified for managed inventory
-    parent_network_code = models.CharField(
-        max_length=20,
-        default='',
-        help_text="Parent network code for managed inventory"
-    )
-    granted_by = models.ForeignKey(
-        User,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='granted_parent_networks',
-        help_text="Admin who granted this access"
-    )
-    
-    class Meta:
-        db_table = 'rbac_parent_networks'
-        ordering = ['user__email']
-    
-    def __str__(self):
-        return f"{self.user.email} -> {self.parent_network_code}"
-
-
 class PermissionAuditLog(TimeStampedModel):
     """
     Audit log for permission changes
@@ -321,10 +257,6 @@ class PermissionAuditLog(TimeStampedModel):
     ACTION_CHOICES = [
         ('GRANT', 'Grant Permission'),
         ('REVOKE', 'Revoke Permission'),
-        ('ASSIGN_ACCOUNT', 'Assign Account'),
-        ('UNASSIGN_ACCOUNT', 'Unassign Account'),
-        ('ASSIGN_PARENT', 'Assign Parent Network'),
-        ('UNASSIGN_PARENT', 'Unassign Parent Network'),
     ]
     
     action = models.CharField(
@@ -344,17 +276,6 @@ class PermissionAuditLog(TimeStampedModel):
         null=True,
         blank=True,
         related_name='audit_logs'
-    )
-    # Removed gam_accounts dependencies - simplified for managed inventory
-    child_network_code = models.CharField(
-        max_length=20,
-        default='',
-        help_text="Child network code for managed inventory"
-    )
-    parent_network_code = models.CharField(
-        max_length=20,
-        default='',
-        help_text="Parent network code for managed inventory"
     )
     performed_by = models.ForeignKey(
         User,
@@ -388,8 +309,8 @@ class PermissionAuditLog(TimeStampedModel):
 
 class PaymentDetail(TimeStampedModel):
     """
-    Payment details for publishers
-    Supports both cryptocurrency and wire transfer payments
+    Payment details for partner admins and sub-publishers.
+    Supports both cryptocurrency and wire transfer payments.
     """
     class PaymentMethod(models.TextChoices):
         CRYPTO = 'crypto', 'Cryptocurrency (TRC20)'
@@ -399,8 +320,8 @@ class PaymentDetail(TimeStampedModel):
         User,
         on_delete=models.CASCADE,
         related_name='payment_details',
-        limit_choices_to={'role': 'publisher'},
-        help_text="Publisher user"
+        limit_choices_to={'role__in': ['partner_admin', 'sub_publisher']},
+        help_text="Partner admin or sub-publisher user"
     )
     
     payment_method = models.CharField(
@@ -500,8 +421,8 @@ class Site(TimeStampedModel):
         User,
         on_delete=models.CASCADE,
         related_name='sites',
-        limit_choices_to={'role': 'publisher'},
-        help_text="Publisher who owns this site"
+        limit_choices_to={'role': 'partner_admin'},
+        help_text="Partner admin who owns this site"
     )
     
     url = models.URLField(
@@ -549,3 +470,193 @@ class Site(TimeStampedModel):
     
     def __str__(self):
         return f"{self.url} ({self.publisher.email})"
+
+
+class TrackingAssignment(TimeStampedModel):
+    """
+    Assigns a subdomain to a sub-publisher for traffic attribution.
+    Reports are filtered by site dimension matching the subdomain.
+    """
+
+    sub_publisher = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name='tracking_assignment',
+        limit_choices_to={'role': 'sub_publisher'},
+        help_text="Sub-publisher this tracking is assigned to"
+    )
+    partner_admin = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='managed_tracking_assignments',
+        limit_choices_to={'role__in': ['partner_admin', 'admin']},
+        help_text="Partner-admin who created this assignment"
+    )
+    subdomain = models.CharField(
+        max_length=255,
+        help_text="Subdomain for attribution (e.g. 'creator1.example.com')"
+    )
+    is_active = models.BooleanField(default=True)
+    notes = models.TextField(blank=True)
+
+    class Meta:
+        db_table = 'accounts_tracking_assignment'
+        unique_together = [['partner_admin', 'subdomain']]
+        indexes = [
+            models.Index(fields=['subdomain']),
+            models.Index(fields=['partner_admin', 'is_active']),
+        ]
+
+    def clean(self):
+        from django.core.exceptions import ValidationError
+        if not self.subdomain or not self.subdomain.strip():
+            raise ValidationError({'subdomain': 'Subdomain is required.'})
+
+    def __str__(self):
+        return f"{self.sub_publisher.email} -> {self.subdomain}"
+
+
+class Subdomain(TimeStampedModel):
+    """
+    Subdomains created by partner-admins for traffic routing.
+    """
+    partner_admin = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='subdomains',
+        limit_choices_to={'role__in': ['partner_admin', 'admin']},
+        help_text="Partner-admin who owns this subdomain"
+    )
+    subdomain = models.CharField(
+        max_length=100,
+        unique=True,
+        db_index=True,
+        help_text="Subdomain prefix (e.g. 'creator1' for creator1.publisher.com)"
+    )
+    base_domain = models.CharField(
+        max_length=255,
+        help_text="Base domain (e.g. 'publisher.com')"
+    )
+    assigned_to = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='assigned_subdomain',
+        limit_choices_to={'role': 'sub_publisher'},
+        help_text="Sub-publisher assigned to this subdomain"
+    )
+    is_active = models.BooleanField(default=True)
+    dns_verified = models.BooleanField(
+        default=False,
+        help_text="Whether DNS for this subdomain has been verified"
+    )
+
+    class Meta:
+        db_table = 'accounts_subdomain'
+        indexes = [
+            models.Index(fields=['partner_admin', 'is_active']),
+        ]
+
+    def __str__(self):
+        return f"{self.subdomain}.{self.base_domain}"
+
+    @property
+    def full_domain(self):
+        return f"{self.subdomain}.{self.base_domain}"
+
+
+class Tutorial(TimeStampedModel):
+    """
+    Platform tutorials accessible to all users.
+    Explains how the platform works and how to interpret data.
+    """
+
+    class Category(models.TextChoices):
+        GETTING_STARTED = 'getting_started', 'Getting Started'
+        TRACKING = 'tracking', 'Tracking & Attribution'
+        EARNINGS = 'earnings', 'Earnings & Payments'
+        REPORTS = 'reports', 'Reports & Analytics'
+        GAM_SETUP = 'gam_setup', 'GAM Setup'
+        SUBDOMAINS = 'subdomains', 'Subdomain Configuration'
+        FAQ = 'faq', 'FAQ'
+
+    title = models.CharField(max_length=255)
+    slug = models.SlugField(max_length=255, unique=True)
+    category = models.CharField(
+        max_length=30,
+        choices=Category.choices,
+        default=Category.GETTING_STARTED
+    )
+    content = models.TextField(help_text="Tutorial content in Markdown format")
+    summary = models.CharField(max_length=500, blank=True)
+    order = models.IntegerField(default=0, help_text="Display order within category")
+    is_published = models.BooleanField(default=True)
+    target_roles = models.JSONField(
+        default=list,
+        help_text="List of roles this tutorial is visible to (empty = all roles)"
+    )
+    video_url = models.URLField(blank=True, help_text="Optional video tutorial URL")
+
+    class Meta:
+        db_table = 'accounts_tutorial'
+        ordering = ['category', 'order', 'title']
+        indexes = [
+            models.Index(fields=['category', 'is_published']),
+        ]
+
+    def __str__(self):
+        return f"[{self.category}] {self.title}"
+
+
+class GAMCredential(TimeStampedModel):
+    """
+    Per-partner GAM connection credentials.
+    Service Account: Partner adds our service email as admin in their GAM network.
+    OAuth 2.0: Partner authenticates via Google OAuth consent flow.
+    """
+
+    class AuthMethod(models.TextChoices):
+        SERVICE_ACCOUNT = 'service_account', 'Shared Service Account'
+        OAUTH2 = 'oauth2', 'OAuth 2.0'
+
+    partner_admin = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name='gam_credential',
+        limit_choices_to={'role': 'partner_admin'},
+    )
+    auth_method = models.CharField(
+        max_length=20,
+        choices=AuthMethod.choices,
+        default=AuthMethod.SERVICE_ACCOUNT,
+    )
+    network_code = models.CharField(
+        max_length=50,
+        help_text="Partner's GAM network code",
+    )
+
+    oauth_refresh_token = models.TextField(
+        blank=True,
+        help_text="Encrypted OAuth 2.0 refresh token",
+    )
+    oauth_client_id = models.CharField(
+        max_length=255,
+        blank=True,
+    )
+
+    is_connected = models.BooleanField(default=False)
+    last_synced_at = models.DateTimeField(null=True, blank=True)
+    connection_error = models.TextField(blank=True)
+
+    class Meta:
+        db_table = 'accounts_gam_credential'
+        verbose_name = 'GAM Credential'
+        verbose_name_plural = 'GAM Credentials'
+
+    def __str__(self):
+        return f"{self.partner_admin.email} - {self.get_auth_method_display()} ({self.network_code})"
+
+    @property
+    def service_account_email(self):
+        return getattr(settings, 'GAM_SERVICE_ACCOUNT_EMAIL', '')
