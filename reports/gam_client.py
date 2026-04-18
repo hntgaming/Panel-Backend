@@ -138,10 +138,10 @@ class GAMClientService:
 
             return {
                 'success': True,
-                'network_code': str(current_network.get("networkCode", "")),
-                'network_name': current_network.get("displayName", ""),
-                'currency_code': current_network.get("currencyCode", "USD"),
-                'time_zone': current_network.get("timeZone", "UTC"),
+                'network_code': str(getattr(current_network, 'networkCode', '')),
+                'network_name': getattr(current_network, 'displayName', ''),
+                'currency_code': getattr(current_network, 'currencyCode', 'USD'),
+                'time_zone': getattr(current_network, 'timeZone', 'UTC'),
             }
         except Exception as e:
             return {
