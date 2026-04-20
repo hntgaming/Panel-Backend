@@ -707,14 +707,16 @@ class UnifiedReportsQueryView(APIView):
         for filter_key, filter_values in filters.items():
             if not filter_values:
                 continue
-            
-            if filter_key in ('publisher', 'network'):
+
+            if filter_key == 'publisher':
+                queryset = queryset.filter(publisher_id__in=filter_values)
+            elif filter_key == 'network':
                 queryset = queryset.filter(network_code__in=filter_values)
             elif filter_key == 'dimension_type':
                 queryset = queryset.filter(dimension_type__in=filter_values)
             elif filter_key == 'site':
                 queryset = queryset.filter(dimension_type='site', dimension_value__in=filter_values)
-        
+
         return queryset
     
     def _apply_dimension_filters(self, queryset, dimensions):

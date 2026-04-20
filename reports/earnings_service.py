@@ -83,7 +83,8 @@ class SubPublisherEarningsService:
         if not parent_publisher:
             return 0, 0
 
-        subdomain = ta.subdomain
+        subdomain = (ta.subdomain or '').strip()
+        subdomain = subdomain.replace('https://', '').replace('http://', '').rstrip('/')
         if not subdomain:
             return 0, 0
 
