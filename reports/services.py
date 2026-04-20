@@ -359,7 +359,7 @@ class GAMReportService:
             try:
                 _throttle()
                 if report_downloader is None:
-                    report_downloader = client.GetDataDownloader(version="v202508")
+                    report_downloader = client.GetDataDownloader(version="v202602")
                 report_job_id = report_downloader.WaitForReport(report_job)
                 break
             except Exception as e:
