@@ -783,28 +783,20 @@ class UnifiedReportsQueryView(APIView):
             return Response({'results': results, 'count': len(results)})
     
     def _overview_response(self, queryset, data):
-        """Return aggregated overview data with comprehensive metrics - Django compatible version"""
-        
-        # Parse requested metrics from the metrics string
+        """Return aggregated overview data with comprehensive metrics."""
         metrics_list = [m.strip() for m in data['metrics'].split(',')]
-        
-        # Group by date and get basic aggregations
+
         daily_data = queryset.values('date').annotate(
             total_revenue=Sum('revenue'),
             total_impressions=Sum('impressions'),
             total_clicks=Sum('clicks'),
             total_ad_requests=Sum('total_ad_requests'),
             total_eligible_ad_requests=Sum('eligible_ad_requests'),
-            
-            
-            # Average metrics
             avg_ecpm=Avg('ecpm'),
             avg_ctr=Avg('ctr'),
-            # Note: viewability will be calculated separately excluding zero-impression accounts
-            
+            partner_count=Count('publisher_id', distinct=True),
         ).order_by('-date')
-        
-        # Format the response data with calculated metrics
+
         formatted_daily_data = []
         for day_data in daily_data:
             formatted_day = {
@@ -813,29 +805,25 @@ class UnifiedReportsQueryView(APIView):
                 'total_impressions': day_data['total_impressions'] or 0,
                 'total_clicks': day_data['total_clicks'] or 0,
                 'total_ad_requests': day_data['total_ad_requests'] or 0,
-                'network_count': day_data['network_count'],
-                'child_count': day_data['child_count']
+                'partner_count': day_data['partner_count'] or 0,
             }
-            
-            # Add requested metrics to the response
+
             if 'ecpm' in metrics_list:
                 formatted_day['avg_ecpm'] = round(day_data.get('avg_ecpm', 0) or 0, 4)
-            
+
             if 'ctr' in metrics_list:
                 formatted_day['avg_ctr'] = round(day_data.get('avg_ctr', 0) or 0, 4)
-            
+
             if 'fill_rate' in metrics_list:
-                # Calculate fill rate: impressions / total_ad_requests * 100
                 total_requests = day_data.get('total_ad_requests', 0) or 0
                 total_imps = day_data.get('total_impressions', 0) or 0
                 fill_rate = (total_imps / total_requests * 100) if total_requests > 0 else 0
                 formatted_day['avg_fill_rate'] = round(fill_rate, 2)
-            
+
             if 'eligible_ad_requests' in metrics_list:
                 formatted_day['total_eligible_ad_requests'] = day_data.get('total_eligible_ad_requests', 0) or 0
-            
+
             if 'viewable_impressions_rate' in metrics_list:
-                # Calculate viewability excluding zero-impression accounts
                 date_value = day_data['date']
                 accounts_with_impressions = queryset.filter(date=date_value, impressions__gt=0)
                 if accounts_with_impressions.exists():
@@ -845,76 +833,20 @@ class UnifiedReportsQueryView(APIView):
                     formatted_day['avg_viewable_impressions_rate'] = round(avg_viewability, 4)
                 else:
                     formatted_day['avg_viewable_impressions_rate'] = 0
-            
-            
-                matched_imps = day_data.get('total_impressions', 0) or 0
-                total_all_imps = matched_imps
-                match_rate = (matched_imps / total_all_imps * 100) if total_all_imps > 0 else 100
-                formatted_day['avg_match_rate'] = round(match_rate, 2)
-            
+
             if 'total_revenue_usd' in metrics_list:
-                # Total revenue
                 matched_rev = day_data.get('total_revenue', 0) or 0
-                total_rev = matched_rev
-                formatted_day['total_revenue_usd'] = f"{total_rev:.2f}"
-            
+                formatted_day['total_revenue_usd'] = f"{matched_rev:.2f}"
+
             formatted_daily_data.append(formatted_day)
-        
-        # Calculate summary statistics
+
         summary_stats = {
             'total_days': len(formatted_daily_data),
             'total_revenue': sum(d['total_revenue'] for d in formatted_daily_data),
             'total_impressions': sum(d['total_impressions'] for d in formatted_daily_data),
-            'avg_daily_revenue': sum(d['total_revenue'] for d in formatted_daily_data) / max(len(formatted_daily_data), 1)
+            'avg_daily_revenue': sum(d['total_revenue'] for d in formatted_daily_data) / max(len(formatted_daily_data), 1),
         }
-        
-        # 🆕 ADD TOTAL ROW - Sum of all accounts data
-        total_row = {
-            'date': 'Total',
-            'total_revenue': summary_stats['total_revenue'],
-            'total_impressions': summary_stats['total_impressions'],
-            'total_clicks': sum(d.get('total_clicks', 0) for d in formatted_daily_data),
-            'total_ad_requests': sum(d.get('total_ad_requests', 0) for d in formatted_daily_data),
-            'network_count': max(d.get('network_count', 0) for d in formatted_daily_data) if formatted_daily_data else 0,
-            'child_count': max(d.get('child_count', 0) for d in formatted_daily_data) if formatted_daily_data else 0
-        }
-        
-        # Add calculated metrics to total row
-        if 'ecpm' in metrics_list:
-            total_revenue = total_row['total_revenue']
-            total_impressions = total_row['total_impressions']
-            total_ecpm = (total_revenue / total_impressions * 1000) if total_impressions > 0 else 0
-            total_row['avg_ecpm'] = round(total_ecpm, 4)
-        
-        if 'ctr' in metrics_list:
-            total_clicks = total_row['total_clicks']
-            total_impressions = total_row['total_impressions']
-            total_ctr = (total_clicks / total_impressions * 100) if total_impressions > 0 else 0
-            total_row['avg_ctr'] = round(total_ctr, 4)
-        
-        if 'fill_rate' in metrics_list:
-            total_requests = total_row['total_ad_requests']
-            total_imps = total_row['total_impressions']
-            total_fill_rate = (total_imps / total_requests * 100) if total_requests > 0 else 0
-            total_row['avg_fill_rate'] = round(total_fill_rate, 2)
-        
-        
-        
-        if 'match_rate' in metrics_list:
-            matched_imps = total_row['total_impressions']
-            total_all_imps = matched_imps
-            total_match_rate = (matched_imps / total_all_imps * 100) if total_all_imps > 0 else 100
-            total_row['avg_match_rate'] = round(total_match_rate, 2)
-        
-        if 'total_revenue_usd' in metrics_list:
-            matched_rev = total_row['total_revenue']
-            total_rev = matched_rev
-            total_row['total_revenue_usd'] = f"{total_rev:.2f}"
-        
-        # Note: Total row is now handled by frontend calculateTotals function
-        # No need to add total row here - frontend will handle it like other tabs
-        
-        
+
         if 'total_revenue_usd' in metrics_list:
             total_rev_sum = 0
             for d in formatted_daily_data:
@@ -924,17 +856,17 @@ class UnifiedReportsQueryView(APIView):
                 else:
                     total_rev_sum += float(rev_val or 0)
             summary_stats['total_revenue'] = f"{total_rev_sum:.2f}"
-        
+
         return Response({
             'query_info': {
                 'date_from': data.get('date_from', 'N/A'),
                 'date_to': data.get('date_to', 'N/A'),
                 'filters_applied': data.get('filters', []),
                 'dimensions': data.get('dimensions', []),
-                'metrics': data.get('metrics', '')
+                'metrics': data.get('metrics', ''),
             },
             'daily_overview': formatted_daily_data,
-            'summary': summary_stats
+            'summary': summary_stats,
         })
     
     def _analytics_response(self, queryset, data):
